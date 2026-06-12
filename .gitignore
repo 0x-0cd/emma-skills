@@ -1,8 +1,19 @@
-# 临时文件
+# OS
 .DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
 *.swp
 *.swo
-*~
 
-# 测试产出
-test/
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Temp
+tmp/
+*.tmp
