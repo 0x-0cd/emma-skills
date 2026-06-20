@@ -102,10 +102,6 @@ Every research-backed answer needs a "but" section:
 - **Narrative collapse**: Don't just list papers — synthesize. What does the *body of evidence* collectively say?
 - **Precision mismatch**: If the user says "AI can improve itself" but the papers say "models can self-play within a narrow domain," call out the mismatch explicitly.
 
-## Reference Files
-
-This skill's `references/` directory stores session-specific research findings as condensed knowledge banks — paper summaries, source URLs, key quotes, and domain notes. Check there before re-searching a topic covered in a prior session.
-
 ## Variant: Tech Rumor / News Article Fact-Checking
 
 When the user asks you to **verify a tech news article, rumor, or leak** — distinct from validating a scientific claim — use this workflow.
@@ -287,8 +283,111 @@ Structure the final answer with:
 - **Temporal urgency**: AI agent memory is moving fast. What's novel today may be crowded in 6 months.
 - **Alice/§101 trap**: Even if prior art search is clean, the patent office may reject on subject matter eligibility grounds. Plan claims to survive Alice step 2B.
 
+## Variant: Financial / Investor Research Report Discovery
+
+When the user asks to **find a specific investment bank report, investor presentation, or financial research note** — distinct from academic papers or news articles — use this workflow.
+
+### What's Different from Claim Validation
+
+| Claim Validation | Financial Report Discovery |
+|---|---|
+| User has a hypothesis → find evidence | User knows a report exists → locate it |
+| Output: verdict (supported/refuted) | Output: report URL, PDF, or closest available public equivalent |
+| Academic papers are primary evidence | Investment bank portals + news citations + SEC filings are primary |
+| Search for concepts | Search for specific titles, codes, or authors |
+
+### Phase 1: Understand What You're Looking For
+
+Clarify the target before searching:
+- **Exact title** vs approximate title?
+- **Is it a published report** (widely distributed) or **investor deck** (internal/client-only)?
+- **Which bank/firm?** Morgan Stanley, Goldman Sachs, JP Morgan, etc.
+- **Which analyst/team?** (e.g., Chetan Ahya, Jonathan Garner, etc.)
+- **Is it a research note, a podcast transcript, a slide deck, or a full report PDF?**
+- **Approximate date?** Recent (weeks) vs archived (months/years)
+
+Knowing these helps calibrate expectations — client-only materials are unlikely to appear in public search results.
+
+### Phase 2: Multi-Strategy Search (run 5-8 angles)
+
+Do NOT stop after one search. Run these in sequence until you find a hit or exhaust reasonable options:
+
+```
+Strategy 1: Exact title (quoted) + firm name
+  "China Outlook Amid AI And Energy Super Cycle" Morgan Stanley
+
+Strategy 2: Author/economist name + topic keywords
+  Chetan Ahya China AI energy super cycle
+
+Strategy 3: Author name + report type
+  "Chetan Ahya" "investor" presentation OR report OR outlook
+
+Strategy 4: Site-specific on the firm's website
+  site:morganstanley.com China AI energy super cycle
+  site:goldmansachs.com China outlook AI
+
+Strategy 5: Related-article citation hunting
+  Find articles that *cite* or *quote* the report → extract the original source URL
+  Search: "Morgan Stanley" "called it" "Asia" "super-cycle"
+
+Strategy 6: Conference/summit name + presentation title
+  "Morgan Stanley China Summit" AI energy presentation
+
+Strategy 7: Filetype search for PDF/slides
+  "China outlook" "AI" filetype:pdf site:morganstanley.com
+
+Strategy 8: Alternative language searches
+  Some Chinese reports have different English marketing titles vs internal titles
+```
+
+### Phase 3: When the Report Isn't Public
+
+Most investment bank research is **client-only** (behind advisor login). If you can't find it:
+
+1. **State clearly** that it's not publicly accessible — don't fabricate a URL
+2. **Offer the closest publicly available alternatives** from the same firm/analyst on the same topic
+3. **Check if there's a public summary** — investment banks often publish blog posts or podcast transcripts that summarize their research
+4. **Ask for more context** — exact date, how the user heard about it (news article citation? email?), report code if any
+
+### Phase 4: Structured Answer Template
+
+```
+## 🏦 Target Report
+[Exact title / estimated title / firm / analyst]
+
+## 🔍 Search Approach
+[Which strategies were tried]
+
+## ✅ Public Availability
+[Found / Not Found Publicly — explain why if client-only]
+
+## 📄 Closest Available Content
+[If not found: table of related publicly available reports from same firm with URLs]
+
+## 💡 Next Steps
+[If not found: what additional context would help]
+```
+
+### Pitfalls
+
+- **Paywall ≠ non-existent**: Client-only reports exist — they're just gated. Don't incorrectly tell the user "this report doesn't exist."
+- **Title drift**: The same report may be called different things on different platforms. The article headline, the database listing, and the internal title may differ. Cast a wider net.
+- **Reporter paraphrase**: News articles often paraphrase a report's title in their own words. The citation in a news article may not use the original title.
+- **Confidence inflation**: "Report titled X from Y" with a URL that actually goes to a landing page ≠ having found the report. Verify you've actually located the document, not a generic reference to it.
+- **Multiple versions**: A "report" may exist as a full PDF, a slide deck, a podcast, and a one-page summary — each with a different title. Treat them as separate targets.
+
 ## Related Skills
 
 - `research/arxiv` — for fetching and parsing arXiv papers
 - `research/research-paper-writing` — for writing academic papers (complementary, downstream)
 - `software-development/spike` — for experimental validation (code-level, not research-level)
+
+## Reference Files
+
+This skill's `references/` directory stores session-specific research findings as condensed knowledge banks — paper summaries, source URLs, key quotes, domain notes, and search templates.
+
+### Available Reference Files
+
+- `references/ai-self-improvement-theory-validation.md` — AI self-improvement theory validation
+- `references/ai-agent-memory-patent-landscape-2026.md` — Agent memory patent landscape
+- `references/financial-report-search-template.md` — Template: financial report search strategies with concrete examples (added 2026-06)

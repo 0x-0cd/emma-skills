@@ -231,9 +231,55 @@ tmp/
 
 ---
 
-## 快速参考：常用 git 命令
+## ✓ 验证外部代码改动（小弟输出审查流程）
+
+当 OpenCode 小弟完成代码改动后，Emma 需要验证输出再告知用户。按以下顺序执行：
+
+### 审查流水线
 
 ```bash
+# 1. 改了什么文件
+git diff --stat
+
+# 2. 具体改了啥（审查代码质量）
+git diff
+
+# 3. 语法检查（只关心改动的文件）
+for f in <file1> <file2> ...; do
+  python -c "import py_compile; py_compile.compile('$f', doraise=True)" && echo "✅ $f"
+done
+
+# 4. 功能验证（跑关键断言，如注册表、config load 等）
+python -c "from world.npc_templates import NPC_TEMPLATES; print(list(NPC_TEMPLATES.keys()))"
+
+# 5. PII 扫描
+git diff | grep -n '哥哥\|老板\|qianneng\|@.*\.com' || echo "✅ PII clean"
+```
+
+### 守则
+
+| 步骤 | 做什么 | 常见坑 |
+|:-----|:-------|:-------|
+| **看 diff** | 读全量 diff，确认逻辑正确、命名一致、没留调试代码 | 小弟说"做完了"不代表真的做完了 |
+| **语法检查** | 只检查改动的文件（预存错误是旧代码，不是本次引入的） | 项目可能已有语法错误，要区分新旧 |
+| **功能验证** | 写简短断言验证改动生效（如模板注册、import 成功、config 加载） | 小弟的 claim 不可信，要自己验证 |
+| **Git 收尾** | 确认小弟是否已 commit。没 commit → git add → commit → push | **小弟常不提交代码**，必须检查 git status |
+
+### 小弟没提交时的收尾流程
+
+```bash
+git status                              # 确认改动
+git add <file1> <file2> ...             # 精确暂存
+git commit -m "type(scope): message"    # Conventional Commits
+git push origin dev                     # 推送到 dev
+git log -1                              # 确认 commit hash
+```
+
+> **历史教训（2026-06-19）：** 小弟改了 NPC 猎人功能后没有 commit，Emma 收到通知以为完事了，结果用户 pull 不到。从此：不管小弟说没说完，自己查 git status 确认提交状态。
+
+---
+
+## 快速参考：常用 git 命令
 # 查看改动
 git diff --stat                  # 文件级别改动概览
 git diff                         # 具体改动内容

@@ -390,7 +390,19 @@ When the user says "整理session/更新记忆/清理掉其他session":
    - `fact_store` → structured knowledge (benchmark results, bug patterns, testing conventions)
    - Compress to user's preferred size (default target: ~2200 chars per batch, or as specified)
 5. **Deduplicate mid-flight** — after adding memory entries, scan for near-duplicates (same entity mentioned in two entries). Remove redundant ones via `memory(action='remove', old_text='...')`
-6. **Delete** — `hermes sessions delete <session_id> --yes` for each processed session (one ID per call); for skeleton sessions not visible in the CLI list, use a direct sqlite3 query to discover IDs
+6. **Delete** — Two approaches for deleting processed sessions:
+
+   **Approach A — Bulk SQL (preferred for deleting specific known IDs):**
+   ```bash
+   sqlite3 ~/.hermes/state.db "DELETE FROM sessions WHERE id IN ('id1', 'id2', 'id3'); VACUUM;"
+   ```
+   More efficient than N CLI calls. Always verify with `SELECT id, title FROM sessions` after.
+
+   **Approach B — CLI (one ID per call):**
+   ```bash
+   hermes sessions delete <session_id> --yes
+   ```
+   For skeleton sessions not visible in the CLI list, use a direct sqlite3 query to discover IDs first.
 7. **Optimize** — `hermes sessions optimize` to reclaim disk space; if the command doesn't exist or errors, fall back to direct `sqlite3 ~/.hermes/state.db "VACUUM;"`
 8. **Report** — summarize what was cleaned, what was saved to memory, disk reclaimed
 9. **Verify LCM state** — `hermes doctor` or check `lcm_status` to confirm LCM lifecycle fragmentation (stale references to deleted sessions) is benign. The stale lifecycle rows do not affect functionality but will show in `lcm_doctor` diagnostics as `stale_lifecycle_current` / `stale_lifecycle_finalized` warnings — these are expected and can be ignored.

@@ -1,7 +1,7 @@
 ---
 name: hermes-provider-config
 description: "Configure Hermes Agent's LLM providers: primary model, credential pools (multi-key rotation), and fallback providers (cross-provider failover)."
-version: 1.2.0
+version: 1.3.0
 author: agent
 created_by: agent
 metadata:
@@ -543,6 +543,8 @@ Model/provider/fallback changes are read at session startup. In CLI: exit and re
 - references/env-var-name-catalog.md — complete env var name catalog for every Hermes provider
 - references/opencode-go-subscription.md — OpenCode Go pricing, usage limits, per-model quotas, and how (not) to check remaining usage
 - references/init-time-blocking-calls.md — synchronous network calls Hermes makes during startup that block in restrictive networks
+- references/mimo-direct-api.md — calling Xiaomi MiMo API directly from terminal/execute_code when vision toolset isn't loaded
 - skill_view(name="hermes-agent") — full CLI reference, provider list, credential pool docs
 - https://hermes-agent.nousresearch.com/docs/user-guide/features/fallback-providers
+- https://hermes-agent.nousresearch.com/docs/user-guide/features/credential-pools
 - https://hermes-agent.nousresearch.com/docs/user-guide/features/credential-pools

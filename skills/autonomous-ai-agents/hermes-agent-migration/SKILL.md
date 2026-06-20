@@ -1,7 +1,7 @@
 ---
 name: hermes-agent-migration
 description: "Migrate and sync Hermes Agent identity across machines: skills repo (emma-skills public), soul data repo (hermes-soul private), export/import workflow, and automated daily cron sync at 02:00 UTC+8."
-version: 1.1.0
+version: 2.0.0
 author: Emma
 tags:
   - hermes
@@ -23,198 +23,315 @@ metadata:
 
 ## Architecture Overview
 
-Two repositories form the portable identity layer:
+Two repositories + one automated cron script form the portable identity layer:
 
 ```
 ┌───────────────────────────────────────────────────────────┐
 │ GitHub (0x-0cd)                                            │
 │                                                           │
 │  PUBLIC: emma-skills          PRIVATE: hermes-soul        │
-│  ├─ skills/* (Emma's skills)  ├─ memory_store.db 🧠      │
-│  ├─ install.sh                ├─ config.yaml ⚙️          │
-│  └─ README                    ├─ .env + auth.json 🔑     │
-│                               ├─ lcm.db + kanban.db 📜   │
-│                               ├─ export-soul.sh          │
-│                               └─ import-soul.sh          │
+│  ├─ skills/* (37 custom)      ├─ export-soul.sh          │
+│  ├─ install.sh                ├─ import-soul.sh          │
+│  └─ README                    ├─ install.sh (new)         │
+│                               └─ README                   │
 │                                                           │
-│  Cron (daily 02:00 UTC+8)                                 │
-│  ├─ session_search → detect changes                       │
-│  ├─ ⚠️ Currently limited — see "The Daily Sync Cron"      │
-│  └─ Reports to QQ (no auto-push yet)                      │
+│  Cron (daily 02:00 UTC+8, no_agent=true)                  │
+│  └─ ~/.hermes/scripts/sync-all.sh                         │
+│       ├─ scan ~/.hermes/skills/ → emma-skills git push    │
+│       └─ export-soul.sh → hermes-soul GitHub Release      │
 └───────────────────────────────────────────────────────────┘
 ```
+
+### Key Design Decision: no_agent Script > LLM Cron
+
+The old cron was LLM-powered (session_search → detect → report). It was a **空转** pattern — burned tokens every night, only reported "no change", never actually pushed anything.
+
+The new approach: **no_agent=true bash script**. Deterministic, zero-token runtime, actually modifies repos, delivers stdout directly. Use this pattern for any repetitive synchronization task.
 
 ### Repository Info
 
 | Component | URL | Visibility | Contents | Typical Size |
 |-----------|-----|-----------|----------|-------------|
-| **emma-skills** | `github.com/0x-0cd/emma-skills` | 🔓 Public | Custom skills (book-reading-guide, karpathy-skill, hermes-self-evolution) + install.sh | ~1.5MB |
-| **hermes-soul** | `github.com/0x-0cd/hermes-soul` | 🔒 Private | memory_store.db, config.yaml, .env, auth.json, lcm.db, kanban.db + export/import scripts | ~3.7MB (tarball) |
-| **Daily Cron** | Job ID `6305f00fbeac` | — | Auto-sync at 02:00 daily, delivers report to QQ | — |
+| **emma-skills** | `github.com/0x-0cd/emma-skills` | 🔓 Public | 37 custom skills across 13 categories + install.sh | ~1.5MB |
+| **hermes-soul** | `github.com/0x-0cd/hermes-soul` | 🔒 Private | export/import/install scripts + GitHub Releases (memory data) | ~1MB (scripts), ~11MB (tarball) |
+| **Cron Script** | `~/.hermes/scripts/sync-all.sh` | — | no_agent bash; runs daily at 02:00; outputs to QQ | — |
 
 ## emma-skills: What Belongs
 
-**Only Emma-specific custom skills** that aren't part of Hermes's built-in catalog.
+**Only Emma-specific custom skills** — anything in `~/.hermes/skills/` that is NOT in `~/.hermes/hermes-agent/skills/`.
 
-### ✅ Include
-- Skills created by the agent (`created_by: agent` in frontmatter)
-- Custom perspective skills (e.g., karpathy-skill)
-- Custom tools (e.g., book-reading-guide — the book navigation guide)
-- Nuwa-skill was previously included but has been removed (was disabled via config.yaml `platform_disabled`; deleted from disk 2026-06-20)
-- Customized versions of any skill with meaningful modifications
+### Detection Logic
 
-### ❌ Exclude
-- Generic Hermes skills (project-init, auto-format) — install via `hermes skills install` on target
-- Skills in Hermes official categories: `autonomous-ai-agents/`, `creative/`, `data-science/`, `devops/`, `email/`, `github/`, `idea-workflow/`, `media/`, `mlops/`, `note-taking/`, `productivity/`, `red-teaming/`, `research/`, `smart-home/`, `social-media/`, `software-development/`, `superpowers/`, `apple/`
-- Hub-installed skills (available via `hermes skills install <name>`)
+```bash
+# Built-in skill index
+declare -A BUNDLED_MAP
+while IFS= read -r -d '' dir; do
+  rel="${dir#~/.hermes/hermes-agent/skills/}"
+  BUNDLED_MAP["$rel"]=1
+done < <(find ~/.hermes/hermes-agent/skills -mindepth 2 -maxdepth 2 -type d -print0)
+
+# Categorized custom skills (inside bundled categories but not bundled themselves)
+find ~/.hermes/skills -mindepth 2 -maxdepth 2 -type d | while read dir; do
+  rel="${dir#~/.hermes/skills/}"
+  [[ -z "${BUNDLED_MAP[$rel]:-}" ]] && echo "CUSTOM: $rel"
+done
+
+# Uncategorized custom skills (directly under ~/.hermes/skills/, not in bundled)
+find ~/.hermes/skills -maxdepth 1 -type d | while read dir; do
+  base="$(basename "$dir")"
+  [[ -d "~/.hermes/hermes-agent/skills/$base" ]] && continue  # bundled category
+  [[ "$base" == .* ]] || [[ "$base" == _* ]] && continue
+  [[ "$base" == apple ]] && continue
+  [ -f "$dir/SKILL.md" ] && echo "CUSTOM: $base"
+done
+```
+
+### ❌ Excluded
+- Generic Hermes skills that ship with the agent (in `~/.hermes/hermes-agent/skills/`)
+- Disabled skills (`~/.hermes/skills/_disabled/`)
+- Hidden/system files
 
 ### Current emma-skills contents
+
 ```
-emma-skills/
-├── README.md
-├── install.sh         # Copies skills/ to ~/.hermes/skills/ (skips existing)
-├── .gitignore
-└── skills/
-    ├── book-reading-guide/       # Book guide (custom)
-    ├── karpathy-skill/           # Karpathy perspective 🧠
-    └── hermes-self-evolution/    # Self-evolution pipeline 🔄
+skills/
+├── autonomous-ai-agents/
+│   ├── acp-delegation/
+│   ├── chinese-messaging-platforms/
+│   ├── hermes-agent-migration/       ← this skill itself!
+│   ├── hermes-maintenance/
+│   ├── hermes-memory-workflow/
+│   ├── hermes-provider-config/
+│   ├── hermes-security/
+│   └── hermes-token-optimization/
+├── book-reading-guide/               # External download
+├── creative/
+│   └── technical-blog-writing/
+├── dogfood/
+│   └── hermes-self-evolution/        # Hermes auto-created
+├── github/
+│   └── github-profile-design/
+├── idea-workflow/                    # Custom category
+│   ├── idea-superpowers-suite/
+│   ├── idea-to-design-doc/
+│   ├── idea-to-implementation-doc/
+│   └── idea-to-ui-design-brief/
+├── karpathy-skill/                   # Deleted 2026-06-19 in commit 23548d0
+├── mlops/
+│   ├── memory-system-evaluation/
+│   └── onnx-embeddings/
+├── productivity/
+│   ├── community-resources/
+│   └── github-blog/
+├── red-teaming/
+│   └── godmode/
+├── research/
+│   ├── chinese-content-research/
+│   ├── evidence-based-health-analysis/
+│   ├── media-crawler-pipeline/
+│   ├── paper-deep-dive/
+│   └── research-backed-validation/
+├── software-development/
+│   ├── code-project/                # Emma written
+│   ├── code-task/                   # Emma written
+│   └── opencode-skills-portfolio/
+└── superpowers/                     # Custom category
+    ├── brainstorming/
+    ├── dispatching-parallel-agents/
+    ├── using-hermes-skills/
+    └── writing-skills/
 ```
 
+Total: **37 custom skills** across **15 category/subcategory groups** (as of skill creation; karpathy-skill was deleted 2026-06-19, count may differ — run `ls ~/emma-skills/skills/` to verify).
+
 ### Install on a new machine
+
 ```bash
 git clone git@github.com:0x-0cd/emma-skills.git ~/emma-skills
 cd ~/emma-skills && bash install.sh
-hermes skills list | grep -E "book-reading-guide|karpathy|hermes-self-evolution"
+# install.sh auto-detects existing skills and skips them
+# New skills are placed preserving category structure
+hermes skills list
 ```
 
 ## hermes-soul: Soul Data
 
-Contains the scripts and data that define Emma's identity.
+Private repo containing scripts to backup/restore Emma's identity data. The actual data (memory_store.db, config, secrets, lcm.db, kanban.db) is stored as **GitHub Releases** via tar.gz, not directly in git.
 
-### Files Tracked
+### Files Backed Up
 
-| File | Purpose | Sensitivity |
-|------|---------|-------------|
-| `memory_store.db` | Emma's personality + holographic facts + user preferences | 🔴 Contains personal info |
-| `config.yaml` | All Hermes configuration (provider, model, etc.) | 🟡 Configuration |
-| `.env` | All API keys | 🔴 Secrets! |
-| `auth.json` | OAuth tokens | 🔴 Secrets! |
-| `lcm.db` | Session compression context (~9MB) | 🟢 Transcripts |
-| `kanban.db` | Kanban board data | 🟢 Task data |
+| File | Purpose | Sensitivity | Typical Size |
+|------|---------|-------------|:----:|
+| `memory_store.db` | Emma's personality + holographic facts | 🔴 Personal data | 216K |
+| `config.yaml` | All Hermes configuration | 🟡 Config | 20K |
+| `.env` | API keys | 🔴 **Secrets!** | 24K |
+| `auth.json` | OAuth tokens | 🔴 **Secrets!** | 4K |
+| `lcm.db` | Session compression context | 🟢 Transcripts | 31M |
+| `kanban.db` | Kanban board data | 🟢 Task data | 112K |
 
-### Export (on old machine)
+### Export (automated by cron, or manual)
+
 ```bash
 cd ~/hermes-soul
-# Basic export to local file
-bash export-soul.sh
-
-# Export + upload to GitHub Release (requires gh CLI)
-bash export-soul.sh /tmp --upload
-
-# Export + GPG encrypt
-bash export-soul.sh /tmp --encrypt
+bash export-soul.sh               # Create tar.gz locally
+bash export-soul.sh /tmp --upload # Create + upload to GitHub Release
 ```
 
-### Import (on new machine)
+### Import / Restore
+
 ```bash
 cd ~/hermes-soul
 # From local file
-bash import-soul.sh hermes-soul-20260613_012617.tar.gz
+bash import-soul.sh hermes-soul-YYYYMMDD_HHMMSS.tar.gz
 
-# From GitHub Release (latest)
+# From GitHub Release (via gh CLI)
 bash import-soul.sh --from-gh 0x-0cd/hermes-soul
 
-# From GitHub Release (specific version)
-bash import-soul.sh --from-gh 0x-0cd/hermes-soul soul-20260613_012617
+# One-click (clone → download latest Release → restore)
+bash install.sh
 ```
 
-### When to Update Soul
-- `memory_store.db` modified (new facts, memory cleanup)
-- `config.yaml` changed (provider switch, model change, memory cap change)
-- Before a major machine migration
+## The Automated Sync (Cron)
 
-No need to update for routine `lcm.db` changes (session compression rotates daily).
+Single cron job (`6305f00fbeac`) runs **daily at 02:00 Beijing time**.
 
-## The Daily Sync Cron
+### ⚠️ Current State (as of 2026-06-20) — Migration Pending
 
-A cron job runs every day at **02:00 Beijing time (UTC+8)**. Its prompt is stored in `references/daily-cron-prompt.md`.
+**The cron is STILL running in LLM-prompt mode, NOT the no_agent bash script described below.** The intended migration to `no_agent=true` + `sync-all.sh` hasn't been completed.
 
-**⚠️ Known limitation (as of 2026-06-20):** The actual deployed cron prompt is a simplified version that only checks mtime on existing `~/emma-skills/skills/` files. It does NOT:
-- Detect skill additions/removals (e.g., nuwa-skill was on disk but never git-rm'd)
-- Run `diff` between `~/.hermes/skills/` and `~/emma-skills/skills/`
-- Auto-commit or push any changes
-- Check `hermes-soul` at all
+Current cron config:
+- Mode: LLM-driven (has an LLM prompt, enabled_toolsets=[terminal, file, session_search])
+- No `script` set, no `no_agent` flag
+- Last status: ok (runs nightly, reports "no change" because its detection logic is incomplete)
 
-See the reference file for the ideal full prompt. If you update the cron job, replace its prompt with the full version from the reference.
+**Known design flaw in current LLM cron:** It only checks modification timestamps of 4 specific public skills (`book-reading-guide/hermes-self-evolution/karpathy-skill/nuwa-skill`) under `~/emma-skills/skills/`. It does NOT check:
+- `~/.hermes/config.yaml` changes (especially `platform_disabled` additions/removals)
+- `git status` in `~/emma-skills/` for unpushed commits
+- Disk state vs config.yaml references (e.g., skill directory exists but was disabled in config, or vice versa)
+- Files outside those 4 skills (e.g., new skills or removed ones)
 
+This means after a skill audit that modifies 14+ SKILL.md files, adds/removes `platform_disabled` entries, and reorganizes `_disabled/` directories, the cron reports "no change — skipping sync."
+
+**To migrate to no_agent:**
 ```bash
-# View cron
-hermes cron list
+# 1. Confirm sync-all.sh exists and is executable
+ls -la ~/.hermes/scripts/sync-all.sh
 
-# Update cron prompt
-hermes cron update <job-id> --prompt "$(cat references/daily-cron-prompt.md)"
+# 2. Update the cron job to no_agent mode
+# cronjob(action='update', job_id='6305f00fbeac', script='sync-all.sh', no_agent=true)
 ```
 
-**Toolsets enabled:** terminal, file, session_search  
-**Deliver to:** QQ (origin).  
-**Note:** Cron runs with `skip_memory=True` — no MEMORY.md/USER.md injected. The prompt must be self-contained.
+### Intended Design (no_agent bash, not yet active)
+
+Mode: `no_agent=true` — runs `~/.hermes/scripts/sync-all.sh` directly without an LLM.
+
+### What sync-all.sh Does
+
+**Phase 1 — emma-skills sync:**
+1. Build bundled skill index from `~/.hermes/hermes-agent/skills/`
+2. Scan `~/.hermes/skills/` — find all custom skills (not in bundled index, not `.`/`_`/`apple`)
+3. Copy each custom skill to `~/emma-skills/skills/` (preserving category structure)
+4. Remove stale skills from repo that no longer exist in source
+5. If anything changed: `git add -A && git commit && git push origin main`
+
+**Phase 2 — hermes-soul sync:**
+1. Run `export-soul.sh /tmp` to create tar.gz of all identity files
+2. Upload as GitHub Release via `gh release create`
+3. Clean up Releases older than 30 days (keep max ~10)
+4. Remove temp tar.gz files
+
+### Design Principles for Cron Scripts
+
+- **Prefer no_agent bash scripts** over LLM cron prompts for deterministic tasks. LLM cron jobs burn tokens on "空转" (detecting no-change and reporting it). Save LLM cron jobs for tasks that need reasoning (summarize feeds, draft briefings, pick interesting items).
+- **Script path resolves under `~/.hermes/scripts/`** — relative paths work (e.g., `script: sync-all.sh`).
+- **Cron runs with no `prompt` when `no_agent=true`** — `prompt` and `skills` are ignored; only `script` matters.
+- **stdout is delivered verbatim** to the target (QQ). Design the script's output as the status report.
+- **Context‑from chaining** works when you need data collection + processing in separate ticks.
+- **`deliver` auto-detects** the current chat — for daily reports that land in QQ, omit `deliver` (auto), or pass explicit `origin`.
+
+### Config Reference
+
+```yaml
+# In cron job definition (via cronjob tool):
+# action: create (or update)
+# job_id: 6305f00fbeac
+# name: 🧠 Emma 全能同步
+# schedule: 0 2 * * *
+# script: sync-all.sh
+# no_agent: true
+# enabled_toolsets: []  # no tools needed — script uses its own commands
+```
 
 ## Migration Workflow: New Machine (Full)
 
 ```bash
-# 1. Install Hermes
+# 1. Install Hermes Agent
 curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 
 # 2. Clone both repos
 git clone git@github.com:0x-0cd/hermes-soul.git ~/hermes-soul
 git clone git@github.com:0x-0cd/emma-skills.git ~/emma-skills
 
-# 3. Restore soul (memory + config + secrets)
-cd ~/hermes-soul && ./import-soul.sh --from-gh 0x-0cd/hermes-soul
+# 3. Restore soul (memory + config + secrets) — requires gh CLI auth'd
+cd ~/hermes-soul && bash install.sh
+# This downloads the latest GitHub Release and restores to ~/.hermes/
 
-# 4. Install skills
+# 4. Install custom skills
 cd ~/emma-skills && bash install.sh
+# Copies all skills to ~/.hermes/skills/, preserves category structure
 
 # 5. Verify
 hermes doctor          # Check config + API keys
 hermes                 # Launch — Emma should recognize you 🥹
 ```
 
-## Updating the Repos (Manual)
+## Manual Operations
 
-### emma-skills
+Normally both repos are auto-synced by the daily cron. Manual intervention is rarely needed.
+
+### Force a sync immediately
+
+```bash
+bash ~/.hermes/scripts/sync-all.sh
+```
+
+### Add a new custom skill mid-cycle
+
+No action needed — the cron will pick it up at 02:00. If you want it pushed right now:
+
+```bash
+bash ~/.hermes/scripts/sync-all.sh
+```
+
+### Revert a bad emma-skills push
+
 ```bash
 cd ~/emma-skills
-
-# Add a new skill
-cp -r ~/.hermes/skills/<new-skill> skills/
-# Update README if needed
-
-# Remove a skill that shouldn't be there
-rm -rf skills/<generic-skill>
-
-git add -A
-git commit -m "♻️ 同步：添加/更新 [技能名]"
+git revert HEAD
 git push origin main
 ```
 
-### hermes-soul
+### Revert a bad hermes-soul Release
+
+Old Releases are kept for 30 days. To restore a specific version:
+
 ```bash
 cd ~/hermes-soul
-git pull
-bash export-soul.sh /tmp --upload
-# This creates a new GitHub Release with the fresh data
+gh release download soul-<timestamp> --repo 0x-0cd/hermes-soul --dir /tmp/
+bash import-soul.sh /tmp/hermes-soul-<timestamp>.tar.gz
 ```
 
 ## Pitfalls
 
-- **Don't put generic Hermes skills in emma-skills** — Duplicates waste space and drift from upstream. Let the target machine `hermes skills install` them.
-- **hermes-soul is PRIVATE** — Contains API keys (`.env`) and OAuth tokens (`auth.json`). Never make it public.
-- **Tarball includes secrets** — Use `--encrypt` (GPG) for extra security if transferring over untrusted channels.
-- **gh CLI required** — The export script needs `gh release create`. Verify with `gh auth status`.
-- **Export needs disk space** — The tarball is ~3.7MB but the temp directory needs room for packaging.
-- **Cron prompt is self-contained** — Don't rely on MEMORY.md in the cron prompt. All paths, repo URLs, and decision logic must be explicit in the prompt.
-- **SSH key required for emma-skills push** — Public repo uses SSH URL. Ensure `~/.ssh/id_*` is configured on the machine.
-- **Cron job ID might change** — If the job is deleted and recreated, the ID changes. Check `hermes cron list` for the current ID.
-- **Cron prompt drifts from reference** — The `references/daily-cron-prompt.md` contains the ideal prompt, but the actually-deployed cron prompt can be a different (simplified) version. Always verify the deployed prompt matches after creation or update via `hermes cron list` (preview) or by examining the cron session output.
-- **Properly removing a disabled skill** — Disabling via `platform_disabled` in config.yaml hides it from `skills_list` but leaves the files on disk (~67MB wasted for nuwa-skill). Full cleanup: `rm -rf ~/.hermes/skills/<skill>/` + `sed -i '/<skill-name>/d' ~/.hermes/config.yaml`. The config.yaml removal must target `platform_disabled.cli` and `platform_disabled.qqbot` separately (they're different lists).
+- **Skill describes cron as no_agent, but it isn't** — As of 2026-06-20, the soul sync cron (6305f00fbeac) still runs the old LLM-prompt mode, not the `sync-all.sh` bash script described in this skill's "Automated Sync" section. The migration hasn't been executed. Check the cron's actual config via `cronjob(action='list')` before assuming the mode.
+- **LLM cron's change detection is incomplete** — The current LLM cron only checks file modification timestamps of 4 specific public skills. It won't detect config.yaml changes, `platform_disabled` changes, disk-vs-config mismatches, or unpushed commits. If you're seeing "no change" reports when you know something changed, this is why.
+
+- **gh CLI must be authenticated** — `gh auth status` before `sync-all.sh` runs. If gh session expires, the soul sync phase fails silently (logged in script output).
+- **SSH key for emma-skills push** — Public repo uses SSH URL. Ensure `~/.ssh/id_*` is configured.
+- **No duplicate notifcations** — `no_agent=true` scripts don't trigger completion notifications. The stdout IS the notification (delivered as a message). If the script runs silently (nothing to do), QQ gets a "no changes" report.
+- **Script must be self-contained** — no reliance on environment variables set by interactive sessions. `sync-all.sh` sets its own paths.
+- **`red-teaming/godmode` is synced** — This is a custom skill added within a non-bundled category. It will be included in emma-skills. If privacy concerns arise, add it to the exclusion list in the script.
+- **`book-reading-guide` and `karpathy-skill` are uncategorized** — They live directly under `skills/` in the repo rather than in a category folder. This is fine — the install.sh preserves their location.
+- **Old tar.gz files accumulate in /tmp** — `sync-all.sh` cleans up after itself (`rm -f "$ARCHIVE"`), but if the export step crashes, a stray ~11MB tar.gz may remain. Monitor `/tmp` if disk space is tight.
+- **hermes-soul is PRIVATE** — Contains API keys (`.env`) and OAuth tokens (`auth.json`). Never make it public. The tar.gz releases inherit the repo's privacy.
+- **Don't put generic Hermes skills in emma-skills** — The sync script properly excludes bundled skills. Manually adding them would waste space and drift from upstream.
