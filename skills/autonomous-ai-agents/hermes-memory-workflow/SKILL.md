@@ -435,6 +435,104 @@ When `lcm_grep(session_scope='all')` returns sessions that are NOT in `hermes se
 
 Run multiple queries with different keyword combinations (see Step 1). The domain-spanning sets shown above typically cover >90% of important content. For thorough coverage, add domain-specific queries based on the user's world.
 
+---
+
+### Phase 0.6: Integrated Session Cleanup — Extract → Compact → Delete
+
+**When to use:** After Phase 0.5 has identified what to capture, and the user asks to "review old sessions and clean up". This is the reactive counterpart to the proactive audit — the user is explicitly asking you to process and delete sessions.
+
+**The pattern:** Review old sessions → extract important info → consolidate memory → delete processed sessions. Execute in one continuous flow.
+
+#### Step 1 — Browse and Select
+
+```python
+# Start here — list recent sessions
+session_search()  # browse mode
+
+# For each active session, load its content
+session_search(session_id='<id>')  # read full or truncated
+```
+
+**Target:** Identify which sessions are old enough to clean. Sessions still in an active discussion chain (user said "下个session继续") are safe to delete — the important decisions have been made.
+
+#### Step 2 — Extract Key Info from Each Session
+
+For each session, distill into durable facts:
+
+- **Commits, merges, deployments** — the concrete output. Last commit hash + summary.
+- **User decisions and approvals** — "哥哥说✅", "符合预期", "下个session继续"
+- **Design principles that emerged** — naming conventions, architectural choices
+- **Tool/workflow fixes** — symlinks created, config changes, new commands discovered
+
+**Format tip:** Compress each session's outcome into 1-2 lines. A session with 296 messages usually reduces to 3-5 bullet points of durable facts.
+
+#### Step 3 — Check Memory Capacity Before Adding
+
+```python
+# Understand current memory pressure
+# If memory is at ≥90% capacity, compaction is required before adding
+# Run memory(action='add') — if it fails with a capacity error, proceed to Step 4
+```
+
+**Capacity wall is a feature, not a bug.** The 2,200-char limit forces you to prioritize. When the error fires:
+- Don't panic and delete random entries
+- Don't try to lower utilization first (that wastes tool calls reading state you already have)
+- **The fastest path:** Find one entry that overlaps with your new content → use `memory(action='replace')` to merge them → retry the `add`
+
+#### Step 4 — Consolidate Before Adding
+
+The specific compaction strategy depends on what's in memory:
+
+| Pattern | Ideal Replacement Candidate | Action |
+|---------|---------------------------|--------|
+| **Overlapping domain** | An existing entry about the *same project/tool* that's older | `replace` — merge old + new into one entry, free exactly 1 slot |
+| **Pointer entry** | A short entry that just says "→ fact_store" (and the target exists) | `remove` — the pointer is already redundant with fact_store |
+| **Low-value detail** | Historical fact that's no longer relevant (completed migration, old version) | `replace` or `remove` |
+| **Compressible block** | Multi-line entry that can be densified | `replace` with compressed version |
+
+**Key insight:** Use `replace` (not `remove` + `add`) when the new and old content belong in the same entry. `replace` keeps the entry's identity slot and is one tool call instead of two. Reserve `add` for genuinely new topics that don't overlap with any existing memory entry.
+
+```python
+# Example: old entry about XunDaoMUD project pointer
+# New entry: session outcome covering the same project
+# → Replace, merging old pointer with new dev progress
+memory(action='replace', 
+       old_text='寻道MUD→fact_store probe', 
+       content='XunDaoMUD 路径~/projects/XunDaoMUD... [合并旧指引+新进度]')
+```
+
+#### Step 5 — Add Remaining New Facts
+
+After compaction frees space, `add` any remaining new entries that don't fit naturally into the merged entry. Memory is now in a compact state.
+
+#### Step 6 — Delete Processed Sessions
+
+```bash
+hermes sessions delete <session_id_1> --yes
+hermes sessions delete <session_id_2> --yes
+# ... (one per session, parallel when independent)
+```
+
+**Safety:** Run `session_search()` (browse) after deletion to confirm all targeted sessions are gone and only the current session remains.
+
+#### Pitfall: Compaction-first vs Add-first
+
+**Wrong order:** `add` new entries → hit capacity error → then `replace` to consolidate. This wastes the first `add` call and its error output.
+
+**Right order:** Before any `add`, check whether you're near capacity. If the last `add` failed with "exceeds limit", the fastest recovery is: (a) identify an overlapping entry, (b) `replace` it with merged content, (c) retry the `add`. Do not read current memory first — you already know what's there from the current tool results.
+
+#### Pitfall: Don't delete sessions you haven't read
+
+The `hermes sessions delete` command accepts any session_id — there's no guard against deleting a session whose content you didn't review. Always read (or confirm from prior knowledge) before deleting. A session deleted from state.db is only recoverable via LCM's raw message store (which may have been compacted).
+
+#### Pitfall: Session DB browse shows sessions chronologically
+
+`sessions_search()` (browse) returns sessions ordered by recency. Sessions from earlier today may appear alongside sessions from yesterday. Sort by scanning the `when` field in each result — don't assume all sessions visible were created today.
+
+#### Pitfall: Session deletion here vs in hermes-maintenance
+
+`hermes-maintenance` skill → Session Store Maintenance → Workflow covers the mechanical deletion (`hermes sessions delete` / `hermes sessions optimize`) as a separate operation. This phase focuses on the **extraction + compaction** that must happen **before** mechanical deletion. The two skills overlap, but the concern here is data integrity (don't delete before extracting), not the CLI mechanics.
+
 #### Pitfall: Cross-session lcm_grep results show raw messages, not summaries
 
 Expanding summary nodes from past sessions is not supported cross-session in current LCM. Raw message snippets are sufficient for the audit — if you find a snippet mentioning an unfamiliar entity or fact, save it to memory. The full context can be reconstructed from the snippet content.

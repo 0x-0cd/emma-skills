@@ -1,7 +1,7 @@
 ---
 name: code-project
 description: "代码项目管理：Git 工作流规范、提交规范、PII 隐私红线、本地开发产物管理。Emma 在处理 git 操作时使用的 skill。"
-version: 1.0.1
+version: 1.1.0
 author: Emma
 platforms: [linux]
 metadata:
@@ -173,6 +173,58 @@ git status                 # 检查是否有意外文件
 
 **例外：** 当 `.gitignore` 已经覆盖了所有临时目录（`.venv/`、`__pycache__/`、`.hermes/` 等）时，`git add -A` 是安全的。但在项目还没配 `.gitignore` 时**绝对不要用**。
 
+### ⚠️ 已知陷阱：不小心用 `git add -A` 跟进了不该进的文件
+
+**第一步：确认 .gitignore 是否存在**
+
+**不要用文件搜索（search_files/ls/find）判断 .gitignore 是否存在！** 它可能只在 git 历史中有，不在工作目录里（例如被意外 `.gitignore` 忽略掉了，或还没被追踪时用 search_files 可能找不到）。
+
+```bash
+# ✅ 正确：用 git log 确认是否曾被 git 跟踪过
+git log --all --oneline -- .gitignore
+
+# 输出示例（表示有历史）：
+# d04f550 fix: remove _evennia_ref from tracking, add .gitignore
+# ccba745 chore(gitignore): add .codegraph/ and .hermes/ for solo dev
+# ...
+
+# 输出为空 → 说明从未被跟踪，可以创建全新的 .gitignore
+# 有输出 → 恢复已有版本再追加，不要从头重写
+```
+
+**第二步：恢复原版 .gitignore（如果已存在）**
+
+```bash
+# ✅ 正确：从最近的 commit 恢复
+# 用 git log 找到最后一个 touch 过 .gitignore 的 commit hash
+git show <latest_commit_hash>:.gitignore > .gitignore
+
+# ❌ 不要用 HEAD~1，可能不是正确的 commit（或 commit 历史中该文件不存在）
+# ❌ 不要从头重写，会丢失项目已有的忽略规则
+```
+
+**第三步：从跟踪中移除误加文件 + 追加忽略规则**
+
+```bash
+# 从跟踪中移除（不删本地文件）
+git rm --cached <误加文件>
+
+# 追加忽略规则
+echo "# local dev artifact" >> .gitignore
+echo "<误加文件>" >> .gitignore
+
+# 提交修复
+git add .gitignore
+git commit -m "fix: remove <误加文件> from tracking, update .gitignore"
+git push origin <branch>
+```
+
+**常见误加文件：**
+- 本地开发 symlink（如 `_evennia_ref` → Evennia 库的 symlink）
+- IDE 配置目录（`.vscode/`、`.idea/`）
+- 缓存/日志目录（`server/logs/`、`__pycache__/`）
+- 框架/库引用（非项目源码的本地引用）
+
 ### ⚠️ 已知陷阱：项目文件改了但忘了 commit
 
 改了仓库中的文件，必须做完整的工作流：**改 → add → commit → push → 告知用户**。中间少一步就是半截子活。
@@ -224,6 +276,7 @@ Thumbs.db
 
 # Temp / debug
 .framework-ref/  # 临时分析用的框架源码
+_evennia_ref     # 本地 Evennia 库 symlink
 tmp/
 ```
 
