@@ -1,7 +1,7 @@
 ---
 name: code-task
 description: "通用路由 Skill：所有代码任务（写代码、改代码、修 Bug、重构、分析、设计等）强制路由到 OpenCode。Emma 不做分析、不写代码、不干扰小弟判断。消除歧义、自动选模型。无例外。"
-version: 3.12.0
+version: 3.14.0
 author: Emma
 platforms: [linux]
 metadata:
@@ -299,9 +299,14 @@ metadata:
    |:----------------------------------|:--------------------------|
    | "在 stop 命令中追加 elif 分支处理 idle_task == 'caiyao' 的停止，参考 cultivate 和 liaoshang 的分支写法。" | "```python\nelif caller.ndb.idle_task == 'caiyao':\n    _stop_caiyao(caller)\n    caller.msg('你停止了采药。')\n```" |
 
-   例外：**纯数据/纯内容配置**（药材模板、JSON、YAML、常量列表）的格式和字段名可以精确描述，因为这是数据结构约定而非逻辑实现。此时可以用模板片段展示结构。
+   例外：
+   - **纯数据/纯内容配置**（药材模板、JSON、YAML、常量列表）的格式和字段名可以精确描述，因为这是数据结构约定而非逻辑实现
+   - **内容/行为里程碑规格**（如进度消息文案、操作反馈文本、交互提示）可以精确描述，因为这是需求规格而非实现逻辑
+   - **接口锅炉板代码**（如遵循已有精确模式的 3-5 行回调/委托方法，接口签名继承）可以使用模板片段展示，因为这是接口契约匹配而非逻辑实现
 
-   > **历史教训（2026-07-11 采药 prompt）：** Emma 在采药系统 prompt 中贴了代码片段（stop 分支的 elif 实现、at_caiyao_tick 回调的实现），被用户指出"你不要直接把代码传给小弟，你负责准确转述开发需求"。从那以后改为只描述行为和参考模式，不再复制代码。
+   > **历史教训（2026-07-11 采药 prompt）：** Emma 在采药系统 prompt 中贴了代码片段（stop 分支的 elif 实现、at_caiyao_tick 回调的实现），被用户指出"你不要直接把代码传给小弟，你负责准确转述开发需求"。从那以后改为只描述行为+参考模式，不再复制代码。
+   >
+   > **历史教训（2026-07-22 研读 prompt）：** 此 session 在研读系统的 prompt 中包含了 `at_study_tick` 的三行回调代码。这是有风险的——虽然回调只委托给 `_study_tick(self)` 且是 player_character.py 中第 4 个完全相同的回调模式，但严格来讲仍是 Python 代码。**安全边界：** 如果小弟能通过看文件中其他 3 个同类回调（at_xiulian_tick/at_liaoshang_tick/at_caiyao_tick/at_wakuang_tick）推断出写法，就不该写进 prompt。只有在新文件中创建首个此类回调、且没有任何参考模式时，才应展示模板。
 
 ### 内容类 Prompt 的陷阱（NPC 对话、文案、描述等）
 
@@ -313,6 +318,10 @@ metadata:
 | **需要命名的内容池**（物品名、技能名等） | **Emma 先设计** → 用户审核 → 再派小弟 | 药材命名、怪物命名、装备命名 |
 | **数值平衡**（概率分布、价格、属性值） | **Emma 先出草案** → 用户审核 → 再派小弟 | 稀有度池、掉落率、修炼速度 |
 | **需要创作的文案**（房间描述、物品描述） | 写出风格约束+示例 → 让小弟按模板批量生成 | 52种药材的描述文本 |
+
+> **进阶技巧：数据驱动数值迭代** — 当设计涉及**游戏经济、修炼曲线、消耗品定价、概率分布**等数值时，不要凭空提案。先提取代码中的实际公式（`curve_cultivation`、突破阈值、修炼速度等），写 Python 脚本计算多路径场景（最差/最优/平均玩家），再基于数据提案。详见 `game-balance-design` 技能。
+>
+> **历史教训（2026-06-22 推演门槛设计）：** Emma 连续 4 轮提案都被用户否定——因为每轮都漏算了一个玩家路径（累计修炼量≠可支配余额、突破后余额、伪灵根坐牢时间）。只有从代码提取实际曲线 + 多路径精算后，提案才通过。每次被否定都是因为数据不完整，不是方向不对。
 
 **命名/数值类内容的正确流程（本 session 验证）：**
 
@@ -602,6 +611,17 @@ tail -50 ~/.local/share/opencode/log/opencode.log
 4. 等用户审核确认后再路由给小弟
 
 > **内容设计的审核门槛：** 用户说"完美"、"拍板"、"没问题"或者直接说"让小弟开工"才算通过。用户只是"嗯"或"看看"说明还在审，别急着派活。
+>
+> **进阶技巧：多旋钮设计方案** — 当用户提出开放性问题（"你觉得可以怎么优化？" / "有什么方案？"），不要只给一个方案。把设计空间拆为多个独立维度（旋钮），每个旋钮给 2-3 个选项并说明利弊，让用户逐项选择：
+> ```
+> 旋钮 1：耗时公式 — A. 线性 / B. 指数
+> 旋钮 2：中断处理 — A. 进度保留 / B. 进度清零
+> 旋钮 3：门槛条件 — A. 无门槛 / B. 悟性<60 读不懂
+> 旋钮 4：稀有度耗时 — A. 10/20/30/40/50/60 / B. 5/10/20/40/80/160
+> 旋钮 5：暴击效果 — A. 有 / B. 无
+> → 用户逐条回复 -> Emma 按每个选择编译完整设计稿 -> 再次确认 -> 路由小弟
+> ```
+> 用户反馈信号通常是逐条编号回复（"1. X；2. Y；3. Z"）。收到后按每项选择编译为完整设计稿，发一次确认再路由小弟。适用场景：非紧急的体验优化/数值平衡/系统扩展。紧急或边界清晰的任务不需要拆旋钮。
 
 #### 逻辑实现阶段（小弟做）
 
@@ -799,6 +819,32 @@ card.find('.hp-fill').css('width', newPct + '%');
 
 > **历史教训（2026-06-21 战斗面板）：** 小弟初始实现每次 combat tick 都 `battlePanel.empty()` 重建卡片，体魄/灵力/神识条只能跳变无法动画。Emma 手动改为增量更新后，`transition: width 0.3s ease` 才生效。用户评价「从功能角度来说不错，但是能不能把三种资源条的减少/增加做成渐变式填充」。
 
+### ⚠️ 后端广播时序问题伪装成 CSS 动画不生效
+
+当用户反馈实时 UI 元素（如进度条、填充条）「不动」「一直黑的」「没动画」时，**不要默认从 CSS/JS 找原因**。先检查服务端广播时机：
+
+```python
+# ❌ 错误的广播时序：前端永远看不到峰值
+tick():
+    AP 累加        # 50→150
+    _resolve_actions  # 扣100→50
+    广播             # 前端只看到 50% → "一直黑的"
+
+# ✅ 正确的广播时序：前端先看到峰值
+tick():
+    AP 累加        # 50→150
+    广播             # 前端看到 100% → 开始动画填充
+    _resolve_actions  # 扣100→50（下次广播才回缩）
+```
+
+诊断方法：
+1. **查看服务端广播时的数据值**（在 `_broadcast_battle_status` 调用前打印 ap 值）
+2. **查看广播和状态变更的执行顺序**（广播在前还是状态变更在前？）
+3. **在浏览器 DevTools Network/Console 中查看收到的消息数据**，看数值是否真的在变化
+4. 如果在一次 tick 内广播了两次（变化前+变化后），前端只会看到最终值。CSS 动画永远不触发
+
+> **经验（2026-06-22 AP 填充条）：** 用户反馈 AP 填充条「一直黑的没动画」，初看以为是 CSS 颜色太暗，实际根因是 `_broadcast_battle_status` 在 `_resolve_actions` 之后执行，前端永远只能看到扣除后的小数值。把广播挪到 resolve 之前即解决。
+
 ### ⚠️ NPC show_if 不防关键词直访 + complete_quest 不防重复
 
 交付分支的两个叠加安全漏洞：
@@ -807,16 +853,42 @@ card.find('.hp-fill').css('width', newPct + '%');
 
 **修复方案详见 `references/evennia-npc-quest-and-inventory-pitfalls.md`。**
 
+### ⚠️ `random.choices` 动态权重求和为零
+
+当词条/概率池的权重从数据字段动态提取时（如 `affix_weights = [a.get("rarity", 50) for a in pool]`），如果某条数据的 `rarity` 字段值为 0，权重就是 0。若池子中所有可用数据的权重都为零，`random.choices()` 会抛 `ValueError: Total of weights must be greater than zero`。
+
+**解决方案：** 提取权重时加 `max(w, 1)` 兜底：
+
+```python
+# ❌ 危险：如果有数据 rarity=0，random.choices 会炸
+weights = [a.get("rarity", 50) for a in pool]
+
+# ✅ 安全：最小权重为 1
+weights = [max(a.get("rarity", 50), 1) for a in pool]
+```
+
+> 教训（2026-07-22 推演词条抽取）：玩家投入 0 资源后 `_draw_affix_candidates` 报错，因为 tier_available 中某个词条的 rarity=0 导致权重列表全零。一行 `max(..., 1)` 修复。
+
 > **历史教训（2026-07-23）：** 铁匠上线后同时发现两个 bug：矿石不移除 + 任务可重复刷精铁剑。使用 NPC 对话系统时交付分支**必须在三个层面做防护**：`show_if` 守卫、`conditions` 验证、`complete_quest` 防重检查。
 
 ---
 
 ## 参考文件
 
-- `references/evennia-goldenlayout-routing.md` — Evennia 浏览器客户端消息路由链。涉及 GoldenLayout 插件链、消息类型路由规则、`updateMethod` 行为、Evennia 标记处理时机、自定义组件注册方式、flex 陷阱，以及 ASCII 文本 vs JSON 卡片两种面板方案的架构选择。
-- `references/evennia-tickerhandler-gotchas.md` — Evennia TickerHandler 的 ndb store_key 陷阱。解释为什么 non-persistent ticker 在 reload 后存活但 ndb 丢失导致 `remove()` 调用短路、ticker 变成孤儿、玩家掉进"修炼已中断"循环。包括修复策略和所有受影响 idle_task 清单。
-- `references/xundao-content-design.md` — 寻道MUD 游戏内容设计模式。包含命名风格梯度、环境分布维度、稀有度池数学（1%→3%→10%→25%增长）、物品模板落地格式，以及药材系统作为完整案例。
-- `references/evennia-npc-quest-and-inventory-pitfalls.md` — Evennia 自定义 NPC/任务/背包系统的常见陷阱。包括：`show_if` 不限制关键词直访导致重复交付、`complete_quest` 不检查完成状态、自定义 inventory slot 双重数量追踪（`item.db.quantity` vs `slot["quantity"]`）、`remove_items` action 的 `item_rarity` 参数、以及交互式面板的动态 CmdSet 锁定模式。
+- `evennia-goldenlayout-routing.md` — Evennia 浏览器客户端消息路由链。涉及 GoldenLayout 插件链、消息类型路由规则、`updateMethod` 行为、Evennia 标记处理时机、自定义组件注册方式、flex 陷阱，以及 ASCII 文本 vs JSON 卡片两种面板方案的架构选择。
+  - **路径:** `skill_view(name="code-task", file_path="references/evennia-goldenlayout-routing.md")`
+- `evennia-tickerhandler-gotchas.md` — Evennia TickerHandler 的 ndb store_key 陷阱。non-persistent ticker reload 后 ndb 丢失导致 ticker 孤儿化。
+  - **路径:** `skill_view(name="code-task", file_path="references/evennia-tickerhandler-gotchas.md")`
+- `xundao-content-design.md` — 寻道MUD 游戏内容设计模式。命名风格、稀有度池、物品模板格式、药材系统案例。
+  - **路径:** `skill_view(name="code-task", file_path="references/xundao-content-design.md")`
+- `evennia-npc-quest-and-inventory-pitfalls.md` — NPC/任务/背包系统的常见陷阱：show_if 绕过、重复交付、双重数量追踪等。
+  - **路径:** `skill_view(name="code-task", file_path="references/evennia-npc-quest-and-inventory-pitfalls.md")`
+- `evennia-combat-effect-pitfalls.md` — 战斗效果管线陷阱：HOT/DOT at_tick 误用 `target.hp` 而非 `target.db.hp` 导致引擎卡死、_apply_effects 双重结算、TickerHandler 静默吞异常、Evennia `db.hp = value` 调用链（DbHolder → AttributeHandler → Django ORM）、防御值初始化回退链、**_ensure_ndb 漏初始化导致 `getattr(ndb, ..., [])` 返回 None**（Evennia ndb 不抛 AttributeError）、**玩家输入期间全局时停设计模式**（_apply_effects 后移到 _waiting_for_input 检查之后）等。
+  - **路径:** `skill_view(name="code-task", file_path="references/evennia-combat-effect-pitfalls.md")`
+- `game-balance-design` — **独立技能。** 数值设计工作流：代码公式提取 → 多路径场景 → 迭代提案。含 Python 模板和本 session 推演门槛 5 轮迭代案例。
+  - **路径:** `skill_view(name="game-balance-design")`
+- `evennia-battle-panel-frontend-tricks.md` — 战斗面板前端渲染技巧：CSS `background-size` 实现 AP 进度条（无额外 DOM）、下一个行动者边框闪烁动画、后端广播时机与前端状态联动的关键时序关系。
+  - **路径:** `skill_view(name="code-task", file_path="references/evennia-battle-panel-frontend-tricks.md")`
 
 ---
 

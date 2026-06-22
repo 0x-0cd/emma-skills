@@ -1,7 +1,7 @@
 ---
 name: hermes-maintenance
 description: "Maintain Hermes Agent system-level dependencies: upgrade bundled Node.js, fix TUI npm install failures, handle ARM64-specific quirks (Electron downloads)."
-version: 1.2.0
+version: 1.3.0
 author: Emma
 license: MIT
 metadata:
@@ -365,6 +365,79 @@ hermes sessions list        # List remaining sessions
 hermes doctor               # Full diagnostics
 ```
 
+### LCM Lifecycle Fragmentation Cleanup
+
+After deleting sessions, LCM retains **stale lifecycle references** — rows in `lcm_lifecycle_state` where `current_session_id` or `last_finalized_session_id` point to sessions that no longer have data in LCM. These show up in `lcm_doctor` as `stale_lifecycle_current` / `stale_lifecycle_finalized` warnings.
+
+**They are harmless** — they don't affect performance, retrieval, or context quality. But they cause the LCM doctor to report a `warn` status, and some operators prefer a clean database.
+
+#### Check Current Fragmentation
+
+```bash
+# Run diagnostics — look for lifecycle_fragmentation check
+hermes doctor
+
+# Or query directly:
+sqlite3 ~/.hermes/lcm.db "
+SELECT 'stale_current', COUNT(*) FROM lcm_lifecycle_state
+WHERE current_session_id != ''
+  AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.session_id = current_session_id)
+  AND NOT EXISTS (SELECT 1 FROM summary_nodes n WHERE n.session_id = current_session_id)
+UNION ALL
+SELECT 'stale_finalized', COUNT(*) FROM lcm_lifecycle_state
+WHERE last_finalized_session_id != ''
+  AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.session_id = last_finalized_session_id)
+  AND NOT EXISTS (SELECT 1 FROM summary_nodes n WHERE n.session_id = last_finalized_session_id);
+"
+```
+
+#### Clean Stale Lifecycle References
+
+**Always backup first:**
+
+```bash
+cp ~/.hermes/lcm.db ~/.hermes/lcm.db.backup.$(date +%Y%m%d_%H%M%S)
+```
+
+**Then clear stale references** (UPDATE in-place, does NOT delete rows):
+
+```bash
+sqlite3 ~/.hermes/lcm.db "
+UPDATE lcm_lifecycle_state
+SET current_session_id = '',
+    current_frontier_store_id = 0,
+    current_bound_at = NULL
+WHERE current_session_id != ''
+  AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.session_id = current_session_id)
+  AND NOT EXISTS (SELECT 1 FROM summary_nodes n WHERE n.session_id = current_session_id);
+"
+
+sqlite3 ~/.hermes/lcm.db "
+UPDATE lcm_lifecycle_state
+SET last_finalized_session_id = '',
+    last_finalized_frontier_store_id = 0,
+    last_finalized_at = NULL
+WHERE last_finalized_session_id != ''
+  AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.session_id = last_finalized_session_id)
+  AND NOT EXISTS (SELECT 1 FROM summary_nodes n WHERE n.session_id = last_finalized_session_id);
+"
+```
+
+**Verify** by re-running the check queries — both counts should be 0. The `lcm_doctor`'s `lifecycle_fragmentation` severity should drop from `warn` to `notice`.
+
+#### What NOT to Clean
+
+These LCM categories are **benign and intentionally retained** — do not touch:
+
+| Category | Count (typical) | Why retained |
+|----------|-----------------|-------------|
+| `lcm_message_sessions_without_lifecycle_reference` | ~23 | Historical retained context — keeps older sessions searchable via LCM grep |
+| `lcm_message_sessions_missing_in_state` | ~129 | Imported or retained context from before the Hermes state DB tracked this conversation |
+| `lcm_node_sessions_missing_in_state` | ~5 | Summary nodes from sessions pruned from state DB but kept for retrieval |
+| `state_only_sessions` | ~2 | Sessions never ingested by LCM (e.g., gateway routing sessions) |
+
+All four are `notice`-level and show as "usually safe" / "benign" — no action needed.
+
 ### What Gets Deleted
 
 - Conversation transcripts (user + assistant messages)
@@ -596,7 +669,7 @@ du -sh <dirname>
 - **`hermes sessions delete` supports `--yes`** — unlike earlier versions, the `delete` subcommand now accepts `--yes` to skip confirmation. No need for `echo "y" | ...` workaround.**`hermes --yolo` does NOT bypass this prompt.**
 - **`hermes sessions delete` accepts exactly ONE session ID per call.** Passing multiple IDs gives "unrecognized arguments" error. Use a loop or call it repeatedly.
 - **Cannot delete the currently-active session** — `hermes sessions delete` on the current session returns an error. Always keep at least the active session.
-- **Deleting from `state.db` does NOT clean LCM lifecycle references.** After deleting sessions via `hermes sessions delete`, the LCM database (`~/.hermes/lcm.db`) retains stale lifecycle rows referencing deleted session IDs. This is normal — LCM lifecycle fragmentation shows up in `lcm_doctor` as warnings about "stale_lifecycle_current" and "stale_lifecycle_finalized". These are harmless and don't need manual cleanup unless disk space is critical.
+- **Deleting from `state.db` does NOT clean LCM lifecycle references.** After deleting sessions via `hermes sessions delete`, the LCM database (`~/.hermes/lcm.db`) retains stale lifecycle rows referencing deleted session IDs. LCM lifecycle fragmentation shows up in `lcm_doctor` as warnings about "stale_lifecycle_current" and "stale_lifecycle_finalized". These are harmless (no performance impact), but they can be cleaned up → see **"LCM Lifecycle Fragmentation Cleanup"** section above for the procedure. Always backup first.
 - **`hermes sessions list` output is NOT safe for mechanical parsing** — sessions with long titles or multi-line previews (especially cron sessions with stack-trace-like previews) span multiple lines in the columnar output. `awk '{print $NF}'` will extract the wrong field on continuation lines, missing or misidentifying session IDs. Always verify the delete loop caught everything by re-running `hermes sessions list` and checking for survivors manually.
 - **session_search only shows the first N sessions** — after heavy deletion, cross-check with `hermes sessions list` (CLI) which shows all sessions, vs `session_search()` (agent tool) which may paginate.
 - **ARM64 Electron downloads timeout** — the Electron binary for ARM64 Linux is ~300MB+ and npm's default timeout (120s) is too short. Always use `--ignore-scripts` when installing workspace packages on ARM64 to skip the Electron postinstall script. If you need Electron (desktop app), install it separately with a longer timeout or pre-download the binary.
