@@ -72,6 +72,8 @@ Let the user choose, then compile the selected combination into a final design d
 ## Reference Files
 
 - `references/game-balance-design.md` — Full session case study (5-round iteration on deduction thresholds), Python script template, and common numerical failure modes.
+- `references/game-content-documentation.md` — Standards for documenting game content tables (affix index, realm names, table format conventions).
+- `references/map-grid-from-image.md` — Technique: extract a room grid and connectivity from a user-drawn map image using PIL pixel analysis.
 
 ## Combat Damage / Skill Value Design
 
@@ -121,37 +123,45 @@ The `HP/realm_power` ratio tells you how `base_damage` must scale to maintain a 
 
 #### Step 4: Choose Target Hit-to-Kill Ratio & Reverse-Calculate
 
-Decide how many same-tier hits a skill should take to kill an opponent:
+Decide how many same-tier hits a skill should take to kill an opponent at **entry level** of that tier:
 
 | Ratio | Feel | Use Case |
 |-------|------|----------|
-| 2 hits | Very strong | Ultimate moves, signature skills |
-| **3 hits** | **Standard** | **Bread-and-butter attack skills** ✅ |
-| 4-5 hits | Weak | Spammable basics, filler |
-| 1 hit | Overpowered | Avoid unless designed as finisher |
+| 2-3 hits | Very strong | Ultimate moves, signature skills |
+| 4-6 hits | Moderate | Strong skill, noticeable impact |
+| **7-12 hits** | **Standard** | **Bread-and-butter basic skills** ✅ |
+| 12+ hits | Weak | Filler, spammable basics |
 
-Calculate: `base_damage = (HP × target_ratio) / (realm_power × attack_rate × def_multiplier)`
+**Principle (verified 2026-07-24):** Base damage skills should be intentionally weak at higher tiers to **encourage combo/buff play**. Higher realm = harder to kill with pure base damage. This prevents "everyone one-shots everything" at endgame.
+
+| Realm | Target kills | Reasoning |
+|-------|-------------|-----------|
+| 练气 (T1) | ~12 (keep existing) | Few buffs available, baseline |
+| 筑基~金丹 (T2~3) | ~8 | Early combos start appearing |
+| 元婴~大乘 (T4~6) | ~10~12 | Rich buff options; pure damage should feel weak |
+
+Calculate: `base_damage = (HP_entry_level × target_kills) / (realm_power × attack_rate × def_multiplier)`
 
 Round to clean numbers. Then verify against mid-tier (5th sub-realm) HP:
 
 ```text
-base_damage=30 @筑基五层(L15): raw=30×2.625×1.19=94, final≈78, vs HP=250 → ~3.2 hits ✅
+base_damage=12 @筑基一层(L11): raw=12×1.50×1.19=21.4, final≈16, vs HP=125 → ~7.8 hits ✅
+base_damage=20 @金丹一层(L21): raw=20×7.0×1.19=167, final≈128, vs HP=1025 → ~8.0 hits ✅
+base_damage=35 @元婴一层(L31): raw=35×30.0×1.19=1250, final≈900, vs HP=10025 → ~11.1 hits ✅
 ```
 
 #### Step 5: Assign MP Cost
 
-MP cost should follow a clean progression matching damage growth:
+MP cost should follow a clean progression matching damage growth. Higher tiers should have **worse MP efficiency** (diminishing returns) to make them meaningful choices, not free upgrades:
 
-| base_damage | MP cost | Ratio | Pattern |
-|------------|---------|-------|---------|
-| 10 | 1 | 10:1 | Tier 1 |
-| 30 | 3 | 10:1 | +2 |
-| 60 | 6 | 10:1 | +3 |
-| 120 | 10 | 12:1 | +4 |
-| 250 | 15 | 17:1 | +5 |
-| 500 | 20 | 25:1 | +5 |
-
-Higher tiers have worse MP efficiency (diminishing returns on cost growth) — this is intentional to keep higher-tier skills as meaningful choices, not free upgrades.
+| Tier | base_damage | MP cost | Efficiency | Pattern |
+|------|------------|---------|------------|---------|
+| T1 | 10 | 1 | 10 dmg/MP | baseline |
+| T2 | 30 | 3 | 10 dmg/MP | +2 |
+| T3 | 60 | 6 | 10 dmg/MP | +3 |
+| T4 | 120 | 10 | 12 dmg/MP | +4 |
+| T5 | 250 | 15 | 17 dmg/MP | +5 |
+| T6 | 500 | 20 | 25 dmg/MP | +5 |
 
 #### Step 6: Verify Edge Cases
 
@@ -164,6 +174,7 @@ Higher tiers have worse MP efficiency (diminishing returns on cost growth) — t
 - **Don't guess base_damage.** Always extract HP and realm_power formulas first. The user corrected this approach on 2026-06-22: "先查找一下最大体魄的计算函数，预估一下每个大境界的角色大约会有多少hp，再做设计".
 - **realm_power grows ~4-6x per realm, but HP grows ~10x.** This means base_damage must increase per tier just to keep pace — higher-tier skills aren't automatically stronger unless base_damage rises.
 - **Attack equipment skews results.** If tier 4 weapons don't exist yet, higher-tier skills will hit slightly weaker than projected. Design conservatively and note the assumption.
+- **Each slot = one affix tier, NOT cumulative.** A 大乘 player equipping 迅捷·陆 gets +16 dodge, not 迅捷壹~陆 summed (+41). When presenting affix build examples, always assume single-tier-per-slot.**
 - **Ling-gen preconditions on elemental skills:** The user clarified that common skills should have `min_ling_gen=15` (just a token check for having the element), no higher. Only rare/specialized skills warrant higher thresholds.
 
 ## Related Skills

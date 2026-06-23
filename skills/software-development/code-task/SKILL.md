@@ -732,7 +732,7 @@ Phase E: 全部完成 → 批量验证 → 推送/测试
 
 | 场景 | 处理方式 |
 |:----|:--------|
-| **Emma 自己写代码** | ❌ Emma 不应该自己写代码，必须走小弟 |
+| **代码行为查询/模拟/理解**（"代码怎么工作的"、"模拟一下如果X"、"trace一下流程"） | ✅ **Emma 直接读代码回答**，不走小弟。见下方坑"代码行为查询" |
 | **项目管理/设计文档** | 走 plan skill |
 | **纯数据/纯内容文件修改** | 直接 write_file / patch |
 | **紧急修复（需要 Emma 快速介入）** | 走紧急流程，用户明确授权 |
@@ -785,17 +785,35 @@ elif caller.ndb.idle_task == "caiyao":
 
 > **历史教训（2026-07-11）：** Emma 在采药系统的 prompt 中直接写了 stop.py 的 elif 代码片段和 PlayerCharacter 的回调实现。用户指出"不要直接把代码传给小弟，你负责准确转述开发需求"。
 
-**不要**因为改动看起来小（改一行 CSS、改一个 JS 字符串、调一个 config 选项）就跳过 OpenCode，直接自己 patch。
+### ⚠️ Evennia 命令中不要等待裸 "yes" 输入做确认
 
-- CSS 影响渲染→是**代码**
-- JS 影响行为→是**代码**  
-- Config 文件如果改变了应用程序的逻辑行为（不仅仅是改一个数据值）→是**代码**
+当在 Evennia 命令中需要多步确认时，**不要设置 `caller.ndb._expecting_xxx` 状态后等待玩家输入 "yes"**——Evennia 的命令解析器不会把裸 `yes` 路由到你的命令，会报"「yes」不是可用命令"。
 
-只有**纯数据变更**（改 YAML/JSON/TOML 的常量值、加一条 NPC 对话记录、更新静态数据表）才允许 `write_file` 直写。
+正确做法：让玩家**重复输入完整命令**来完成确认。比如 `skills forget X` 需要玩家连续输入三次完整命令（第一次开始，第二次确认，第三次最终执行）。在 `func()` 开头检查 pending 状态，如果当前输入匹配 pending 操作的子命令+参数，推进 step；否则取消 pending。
 
-**判断标准：** 这个改动会不会改变用户在浏览器里看到/体验到的行为？会 → 走 OpenCode。不会（仅修改后端某个不暴露的阈值数值）→ 可以直写。
+**详见：** `skill_view(name="code-task", file_path="references/evennia-command-interaction-patterns.md")` 的「模式 1：双重确认」章节。
 
-> **历史教训（2026-06-20）：** Emma 自己 patch 了 `map_util.py` 的几行字符串（觉得"只是换几个符号又不是逻辑"），然后继续 `patch` CSS/JS 配置。被用户抓包问"你在用 opencode 改吗？"→ 逃不掉，该走的路必须走。
+> **教训（2026-06-23 本 session）：** Emma 让小弟实现了 skills forget 采用等待 "yes" 输入的方式。玩家输入 "yes" 后提示「yes 不是可用命令」。修复方案改为重复输入完整命令的确认流。
+
+**不要因为改动看起来小就跳过 OpenCode 直接 patch。** 这是 code-task 被违反最常见的原因——Emma 觉得"只是改几个常量值/加几行命令/换个字符串，不值得走一轮 OpenCode"。
+
+只要改动**改变玩家体验或系统行为**，不论改量大小都必须走 OpenCode：
+
+- CSS 影响渲染 → 走 OpenCode
+- JS 影响行为 → 走 OpenCode
+- 命令/后端逻辑改动 → 走 OpenCode
+- Config 改变逻辑行为 → 走 OpenCode
+
+**唯一例外：纯数据变更**（改 YAML/JSON/TOML 的静态常量值、加一条 NPC 对话记录、更新静态数据表，且不改变程序逻辑）才允许 `write_file` 直写。
+
+**常见触发场景：**
+1. 用户描述需求后没直接说"派小弟"，Emma 自己用 patch 改了 → ❌ 必须先消歧再路由，不替用户做跳过决策
+2. 改动经设计审核后，Emma 觉得"反正都过审了，直接改更快" → ❌ 流程没有"审核过了就能跳过"的例外
+3. 修 bug 时定位到根因，自己用 patch 修了 → ❌ 即使是单行修复也必须走 OpenCode
+
+**判断标准：** "如果这个改动被发现有 bug，用户会觉得是我的问题还是小弟的问题？"答案是 Emma 的问题——因为代码是 Emma 写的，没有经过工具链验证。
+
+> **教训（2026-06-23 本 session）：** 用户让加心法替换功能，Emma 用 `patch` 直接改了 `skill_menu.py` 和 `idle_tasks.py`（121 行），被用户当场抓包"为什么不加载 code-task？"——技能里写得很清楚"无例外"，但自己找理由绕过了。正确做法：加载 code-task → 写 prompt → 派小弟，无论改量大小。
 
 ### ⚠️ 前端定时刷新型 UI：小弟默认重建 DOM，CSS 过渡不生效
 
@@ -818,6 +836,29 @@ card.find('.hp-fill').css('width', newPct + '%');
 如果是后端数据驱动的刷新（战斗 tick、状态轮询等），一定在【约束】段加上这条。
 
 > **历史教训（2026-06-21 战斗面板）：** 小弟初始实现每次 combat tick 都 `battlePanel.empty()` 重建卡片，体魄/灵力/神识条只能跳变无法动画。Emma 手动改为增量更新后，`transition: width 0.3s ease` 才生效。用户评价「从功能角度来说不错，但是能不能把三种资源条的减少/增加做成渐变式填充」。
+
+### ⚠️ 代码行为查询 ≠ 代码分析/实现：先读代码再回答，不猜不编
+
+**核心原则：当用户问"这段代码怎么工作的"、"如果 X 会发生什么"、"模拟一下 Y 场景"，这是 Emma 直接读代码回答的职责，不要路由给小弟。**
+
+当用户问代码行为相关的问题时，你必须：
+
+1. **先识别任务类型：**
+   - **代码行为查询/模拟/理解**（"代码在哪"、"怎么工作的"、"模拟一下如果 X"）→ **Emma 直接做**：read_file → 追踪路径 → 回答
+   - **代码分析/问题定位/修 bug**（"为什么 Y 不工作"、"帮我分析根因"）→ 路由小弟（走 code-task 正常流程）
+
+2. **输入侧：必须从文件系统读，不从记忆回答。** 任何代码路径、文件名、参数名、行为逻辑的结论，都必须有 `read_file` / `search_files` 的实际输出支撑。
+
+3. **模拟侧：先读源文件确认真正逻辑，再推演。** 不要先写答案再找代码支持——先读文件再回答，顺序不能反。
+
+| 信号词 | 谁做 | 前置动作 |
+|:------|:----|:---------|
+| "代码在哪"、"文件在哪"、"怎么工作的"、"流程是什么样的"、"模拟一下"、"如果...会怎样"、"trace 一下" | **Emma** | 先 read_file/search_files 读实际代码 |
+| "为什么报错"、"帮我分析"、"定位 bug"、"修一下"、"实现"、"设计" | **小弟** | 走 code-task 正常路由流程 |
+
+**顺序铁律：先读文件 → 再回答。** 说了"让我看看代码"之后，必须立刻执行 read_file 或 search_files，不能继续写文字。读到文件内容后再组织回答。
+
+> **教训（2026-06-22 推演幻觉）：** 用户问推演系统的文件结构和行为时，Emma 没有读任何文件就列出了 `commands/character/deduce.py`、`world/deduce_system.py` 等路径，结果全不存在。然后继续编造 `yanxiu` 命令和研读逻辑。用户连续纠正 3 轮才真正开始读代码。如果第一次问时就 read_file 确认，3 轮对话就省了。
 
 ### ⚠️ 后端广播时序问题伪装成 CSS 动画不生效
 
@@ -881,14 +922,20 @@ weights = [max(a.get("rarity", 50), 1) for a in pool]
   - **路径:** `skill_view(name="code-task", file_path="references/evennia-tickerhandler-gotchas.md")`
 - `xundao-content-design.md` — 寻道MUD 游戏内容设计模式。命名风格、稀有度池、物品模板格式、药材系统案例。
   - **路径:** `skill_view(name="code-task", file_path="references/xundao-content-design.md")`
+- `evennia-command-interaction-patterns.md` — Evennia 命令交互模式：双重确认（forget）、clickable 选择面板（eq picker）、技能详情快捷操作（show 的装备/推演/遗忘链接）、研读后自动激活、状态标志存储位置。
+  - **路径:** `skill_view(name="code-task", file_path="references/evennia-command-interaction-patterns.md")`
 - `evennia-npc-quest-and-inventory-pitfalls.md` — NPC/任务/背包系统的常见陷阱：show_if 绕过、重复交付、双重数量追踪等。
   - **路径:** `skill_view(name="code-task", file_path="references/evennia-npc-quest-and-inventory-pitfalls.md")`
+- `evennia-command-confirm-patterns.md` — Evennia 命令多步确认的陷阱：ndb 状态标志 + "yes" 独立输入的 cmdhandler 路由失败，以及重复命令确认的修复模式。
+  - **路径:** `skill_view(name="code-task", file_path="references/evennia-command-confirm-patterns.md")`
 - `evennia-combat-effect-pitfalls.md` — 战斗效果管线陷阱：HOT/DOT at_tick 误用 `target.hp` 而非 `target.db.hp` 导致引擎卡死、_apply_effects 双重结算、TickerHandler 静默吞异常、Evennia `db.hp = value` 调用链（DbHolder → AttributeHandler → Django ORM）、防御值初始化回退链、**_ensure_ndb 漏初始化导致 `getattr(ndb, ..., [])` 返回 None**（Evennia ndb 不抛 AttributeError）、**玩家输入期间全局时停设计模式**（_apply_effects 后移到 _waiting_for_input 检查之后）等。
   - **路径:** `skill_view(name="code-task", file_path="references/evennia-combat-effect-pitfalls.md")`
 - `game-balance-design` — **独立技能。** 数值设计工作流：代码公式提取 → 多路径场景 → 迭代提案。含 Python 模板和本 session 推演门槛 5 轮迭代案例。
   - **路径:** `skill_view(name="game-balance-design")`
 - `evennia-battle-panel-frontend-tricks.md` — 战斗面板前端渲染技巧：CSS `background-size` 实现 AP 进度条（无额外 DOM）、下一个行动者边框闪烁动画、后端广播时机与前端状态联动的关键时序关系。
   - **路径:** `skill_view(name="code-task", file_path="references/evennia-battle-panel-frontend-tricks.md")`
+- `evennia-map-cards-flex-layout.md` — 地图面板十字卡片布局的 flex 陷阱。非对称横向出口（只有 west 或只有 east）导致 Center 卡片偏离竖线的根因，以及通过 JS 插入等宽 spacer 的修复方案。
+  - **路径:** `skill_view(name="code-task", file_path="references/evennia-map-cards-flex-layout.md")`
 
 ---
 
