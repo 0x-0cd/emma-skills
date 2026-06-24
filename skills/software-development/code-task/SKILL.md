@@ -1,7 +1,7 @@
 ---
 name: code-task
 description: "通用路由 Skill：所有代码任务（写代码、改代码、修 Bug、重构、分析、设计等）强制路由到 OpenCode。Emma 不做分析、不写代码、不干扰小弟判断。消除歧义、自动选模型。无例外。"
-version: 3.14.0
+version: 3.15.0
 author: Emma
 platforms: [linux]
 metadata:
@@ -356,7 +356,11 @@ Emma 更新设计稿
 
 ### 系统级改动的 Reciprocal Sweep（防漏改）
 
-当一个改动涉及**移除/重命名/重构某个功能**（而不是新增），影响面横跨多个文件时，不能只盯着眼前改的文件。**只改核心逻辑却不扫关联代码**，是用户 review 时发现漏改的第一大原因。
+当一个改动涉及**移除/重命名/重构某个功能**或**修改公式曲线**，影响面横跨多个文件/数据时，不能只盯着眼前改的文件。**只改核心逻辑却不扫关联代码/数据**，是用户 review 时发现漏改的第一大原因。
+
+#### 变体 A：移除/重命名/重构功能的代码扫描
+
+适用于删除功能、重命名 API、重构模块时，需要扫全项目找引用。——即下方标准流程。
 
 在 prompt 写完&派小弟之前，追加一个 **Reciprocal Sweep** 步骤：
 
@@ -385,6 +389,42 @@ Emma 更新设计稿
 完成标准：grep 关键词后，每个结果要么在本次 commit 中被改了，要么被你判断为"故意保留"且能在交付报告中列出。**零"遗漏"条目。**
 
 > **历史教训（2026-06-20）：** 移除 equip force 功能后，cultivate.py 错误提示里还写着"再用 equip <心法名> force 装备为主心法"。用户 review 时一抓一个准。如果当时做了 reciprocal sweep——grep "equip.*force" → 发现 cultivate.py → 顺手改了→ 一次交付就过关。
+
+#### 变体 B：公式/曲线修改的数据值扫描
+
+当改动涉及**修改游戏平衡公式、数学曲线、伤害计算管线**等时，**数据值比代码引用更容易被遗漏**。公式改了，但所有按旧公式调出来的数值（怪物属性、技能伤害、掉落价值等）全部失效，且 grep 搜不出来（因为数据是数值不是标识符）。
+
+**典型案例（本 session 2026-06-24）：**
+- 将 `curve_attack_strength` 从 `attack≤100→1.0` 改为 `(attack/100)^0.5`
+- 所有怪物模板的 `attack: 1` 从倍率 1.0 骤降至 0.1（10 倍降幅）
+- 结果：猛兽扑咬伤害降为 0（因 defense 削减后 int() 归零）
+- grep 完全搜不到——数据值是 `1` 不是函数名
+
+**标准流程：**
+
+```text
+1. 确定公式改动：如 curve_attack_strength 从分段改为连续幂曲线
+2. 确定受影响的数据来源：
+   ┌──────────────────┬──────────────────────────────────────┐
+   │ 数据来源          │ 示例                                  │
+   ├──────────────────┼──────────────────────────────────────┤
+   │ 物品/装备/怪物模板 │ monster_templates.py 的 attack 字段  │
+   │ 技能/词条配置     │ affix_templates.py 的 base_damage    │
+   │ NPC 对话/任务奖励 │ quest_data.py 的 reward_value         │
+   │ 常量默认值        │ game_constant.py 的默认 ATTRIBUTE    │
+   │ 文档/注释         │ PLAYER_ATTR_REFERENCE.md 的示例计算  │
+   └──────────────────┴──────────────────────────────────────┘
+3. 对每个数据来源提问：
+   - 这个值/公式假设了旧曲线的什么行为？
+   - 新曲线下这个值是否仍然合理？
+   - 如果是"基准值"（比如 attack=100 代表基准），旧曲线用 ≤100→1.0 掩盖了它；新曲线需要显式设为基准值。
+4. 估算新曲线下的实际数值：用 Python 脚本跑新旧对比
+5. 把需要调整的数据项写进 prompt 的【改什么】段
+
+完成标准：每个受公式影响的数据源，要么已更新数值，要么被你判断为"恰好正确"且有依据。**零遗漏。**
+```
+
+> **教训（2026-06-24 本 session）：** 修改攻击强度曲线后，所有怪物 attack=1 的伤害从正常变为接近 0，因为旧曲线把 attack=1 看作"基准值"(×1.0)，新曲线给的是 ×0.1。如果当时做了一个反向计算——"新曲线下 attack=1 是多少倍率？旧曲线呢？差多少？"——就能在推送前发现怪物攻击值需要上调。公式修改后永远要反问：旧公式下哪些"隐藏的假设"被新公式打破了？
 
 ### 文件拆分/重命名的向后兼容策略
 
@@ -932,8 +972,12 @@ weights = [max(a.get("rarity", 50), 1) for a in pool]
   - **路径:** `skill_view(name="code-task", file_path="references/evennia-combat-effect-pitfalls.md")`
 - `game-balance-design` — **独立技能。** 数值设计工作流：代码公式提取 → 多路径场景 → 迭代提案。含 Python 模板和本 session 推演门槛 5 轮迭代案例。
   - **路径:** `skill_view(name="game-balance-design")`
+- `player-attribute-reference` — **项目文档：** `docs/PLAYER_ATTR_REFERENCE.md`。玩家属性体系全参考：一级/二级属性定义、公式曲线（血量/攻击/防御/境界倍率）、伤害管线结算流程、五行抗性机制、升级成长逻辑、怪物属性模板结构。进行战斗/怪物/技能数值设计时先加载此文。
+  - **路径:** 项目中 `docs/PLAYER_ATTR_REFERENCE.md`
 - `evennia-battle-panel-frontend-tricks.md` — 战斗面板前端渲染技巧：CSS `background-size` 实现 AP 进度条（无额外 DOM）、下一个行动者边框闪烁动画、后端广播时机与前端状态联动的关键时序关系。
   - **路径:** `skill_view(name="code-task", file_path="references/evennia-battle-panel-frontend-tricks.md")`
+- `evennia-global-script-pitfalls.md` — Evennia 全局脚本陷阱：`self.owner` 仅存在于对象型脚本，全局脚本用 `self.db` 存数据，及读写脚本数据的查询模式。
+  - **路径:** `skill_view(name="code-task", file_path="references/evennia-global-script-pitfalls.md")`
 - `evennia-map-cards-flex-layout.md` — 地图面板十字卡片布局的 flex 陷阱。非对称横向出口（只有 west 或只有 east）导致 Center 卡片偏离竖线的根因，以及通过 JS 插入等宽 spacer 的修复方案。
   - **路径:** `skill_view(name="code-task", file_path="references/evennia-map-cards-flex-layout.md")`
 

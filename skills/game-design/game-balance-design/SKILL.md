@@ -163,11 +163,49 @@ MP cost should follow a clean progression matching damage growth. Higher tiers s
 | T5 | 250 | 15 | 17 dmg/MP | +5 |
 | T6 | 500 | 20 | 25 dmg/MP | +5 |
 
-#### Step 6: Verify Edge Cases
+#### Step 6: Add Damage Variance for Combat Feel
+
+Pure deterministic damage (`base × all_rates → exact same number every hit`) feels mechanical. Add a small random roll at the end of `_calc_raw_damage`:
+
+```python
+variance = random.uniform(0.85, 1.15)  # ±15% is a sweet spot
+return max(int(raw * variance), 1)
+```
+
+**Design notes:**
+- **±15%** is the tested sweet spot for XunDaoMUD — big enough to feel alive, small enough that tactics > luck.
+- **Apply BEFORE defense reductions** (on raw damage, not final). This makes the variance affect the hit's impact, not the math feel weird when defense has diminishing returns.
+- **Floor at 1** — never show 0 on a hit that didn't dodge. Zero-damage hits that aren't dodges confuse players.
+- **Combines well with ±HP variance** on monsters: monster HP varies ±10%, damage varies ±15% → every fight is unique without breaking balance.
+- **Both player and monster damage** should use the same variance. Asymmetric variance feels unfair — a monster that always hits 115% while the player's hits are always 85% feels rigged.
+
+**Common pitfalls:**
+- `random.uniform` gives a uniform distribution, not bell curve. If you want most hits near the center, try `random.triangular(0.85, 1.15, 1.0)` instead. Uniform is punchier (more extreme values); triangular is more predictable.
+- Variance that's too wide (±25%+) makes combat feel like slot machines. Players can't trust their damage output for strategy.
+- Don't apply variance to DOT ticks — DOT is already a steady erosion. Variance on DOT makes it impossible to tell if the monster is dying or not.
+
+#### Step 7: Verify Edge Cases
 
 - **Entry-level vs mid-tier:** Skill might 3-shot at tier entry but 2-shot mid-tier. Check both.
 - **With best available equipment:** Higher attack makes skills stronger. Account for existing equipment bonuses.
 - **Cross-tier fights:** A 炼气 player with a 金丹 skill should see dramatically higher damage. Verify realm_power scaling makes this work naturally.
+
+### Curve Design Patterns: Hard Branch vs Continuous
+
+When designing attack/defense/realm-power curves, avoid **hard branches** where a range of inputs produce identical output (e.g. `if attack <= 100: return 1.0` — makes debuffs meaningless). Three architectural patterns:
+
+| Pattern | Shape | When to Use |
+|---------|-------|-------------|
+| **A — Linear + Power** | `if x < T: x/T` else `(x/T)^p` | Clean baseline with soft penalty below threshold. Symmetric with defense curves. | 
+| **B — Pure Power** | `clamp(x/T, min)^p` | Single formula, continuous from 0. Every input matters. Choose `p` to control steepness. |
+| **C — Log** | `log₂(x+1)/log₂(T+1)` | Ultra-smooth, hard to overflow. Diminishing returns happen fast. Weak positive feedback for gear progression. |
+
+**Exponent `p` rules of thumb:**
+- `p < 0.4` — flat, debuffs barely matter, stacking attack gives weak returns
+- `p = 0.5` — sqrt curve, good balance (attack=200 → 1.41x, attack=500 → 2.24x)
+- `p > 0.6` — steep, gear upgrades feel very impactful, risk of runaway scaling
+
+**Key check:** Does your defense curve (`def/(def+C)`) give diminishing returns from 0? If so, attack should too — symmetry makes the system feel coherent. A defense that soft-caps at 0 while attack flatlines until 100 is a design smell.
 
 ### Pitfalls
 
@@ -176,7 +214,56 @@ MP cost should follow a clean progression matching damage growth. Higher tiers s
 - **Attack equipment skews results.** If tier 4 weapons don't exist yet, higher-tier skills will hit slightly weaker than projected. Design conservatively and note the assumption.
 - **Each slot = one affix tier, NOT cumulative.** A 大乘 player equipping 迅捷·陆 gets +16 dodge, not 迅捷壹~陆 summed (+41). When presenting affix build examples, always assume single-tier-per-slot.**
 - **Ling-gen preconditions on elemental skills:** The user clarified that common skills should have `min_ling_gen=15` (just a token check for having the element), no higher. Only rare/specialized skills warrant higher thresholds.
+- **Continuous power curves need a floor.** A pure power curve `(x/T)^p` breaks at x ≤ 0 — returns 0 or NaN, causing silent bugs (zero damage, division errors). Always clamp: `if x <= 0: return EPSILON` (0.05–0.1). Common gotcha: debuff systems that push attack/defense below zero. Affects Pattern B (Pure Power) and any un-bounded curve.
+- **Hard branches hide debuff irrelevance.** `if x <= 100: return 1.0` makes attack=1 and attack=100 produce identical output. The user called this out as a design smell: defense gets soft-capped from 0, so attack should too. If defense uses `def/(def+C)`, attack should be symmetric — either both continuous or both thresholded.
 
 ## Related Skills
 
 - `code-task` — Routing skill that references this methodology in its Prompt Writing section.
+
+---
+
+## Monster Template Attribute Design
+
+When designing monster attribute values in templates (`world/monster_templates.py`), follow the **10% variance convention** to add randomness without breaking balance:
+
+### Convention: ~10% variance on core stats
+
+For each monster's `max_hp`, `max_mp`, `max_sp`, `attack`, and `defense`, use the `_base` / `_range` template format:
+
+```python
+# Instead of fixed values:
+"max_hp": 10,
+
+# Use base + range (~10% of base):
+"max_hp_base": 10,
+"max_hp_range": 1,     # → 9-11
+```
+
+**Resolution logic** (in `resolve_template_attrs`): if the template contains `"<attr>": value`, use fixed. If it contains `"<attr>_base": X` + `"<attr>_range": R`, roll `randint(X-R, X+R)`. This is already implemented — no code changes needed to enable variance.
+
+### What NOT to randomize
+
+| Keep fixed | Reason |
+|-----------|--------|
+| `dodge` | Percentage stat; small fluctuations shift breakpoints too much |
+| `action` | Speed ordering; randomization causes unfair turn-order inconsistency |
+| `defense_jin/mu/shui/huo/tu` | Elemental identity; should be fixed per monster type |
+
+### Spawn-time guarantees
+
+Monsters always spawn at full HP/MP/SP regardless of template randomness. In `spawn_combat_monster()` (or equivalent), always set after template loading:
+
+```python
+monster.load_from_template(template)
+monster.ndb.hp = monster.ndb.max_hp
+monster.ndb.mp = monster.ndb.max_mp
+monster.ndb.sp = monster.ndb.max_sp
+```
+
+This is already enforced in `utils/monster_util.py:spawn_combat_monster()` (verified 2026-06-24).
+
+### Reference
+
+- Session detail: `skill_view(name="game-balance-design", file_path="references/attack-curve-redesign.md")` — full case study including the hard-branch-to-continuous migration.
+- Session detail: `skill_view(name="game-balance-design", file_path="references/damage-variance-implementation.md")` — ±15% damage variance design choice and implementation.
