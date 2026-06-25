@@ -77,37 +77,64 @@ if caller.db.quest_states.get(quest_key) == "completed":
 slot = {"dbref": item.id, "quantity": N}  # N 是堆叠数量
 ```
 
-同时每个 item 对象也有 `item.db.quantity` 属性。
+同时每个 item 对象也有 `item.db.quantity` 属性——但**背包显示只读 slot["quantity"]**。
 
-### 常见 Bug：只改对象属性，不碰 slot
+### 常见 Bug：改对象属性，不碰 slot
 ```python
-# ❌ 错误做法：只改了对象属性
+# ❌ 错误做法：只改对象属性
 self.db.quantity -= 1
 if self.db.quantity <= 0:
     self.delete()
 ```
 这不会更新 `caller.db.inventory` 中的 slot，导致：
-- Slot 仍是 `{"dbref": deleted_id, "quantity": 1}`（非 None）
-- `show_bag()` 的 `_used_slots()` 计数该 slot → 格子数不释放
-- `_find_empty_slot()` 跳过该 slot → 新物品从下一格开始
+- Slot 仍是 `{"dbref": deleted_id, "quantity": N}`（数量不变）
+- 若 item 已 `delete()`，slot 变成悬空指针
+- `show_bag()` 读 slot["quantity"] 显示旧值 → 数量"没少"
+- `_find_empty_slot()` 跳过该 slot → 格子不释放
 
-### 正确做法：通过 remove_from_inventory 修改槽位
+### 区分两种消耗模式
+
+#### 模式 A：单颗消耗（丹药、符箓等）— 一次用 1 个
 ```python
-# ✅ 正确：通过背包系统修改
-for idx, slot in enumerate(character.db.inventory or []):
+# ✅ 正确：从背包扣 1，数量归零时清理 slot + 删 item
+for idx, slot in enumerate(caller.db.inventory or []):
     if slot and slot["dbref"] == self.id:
-        character.remove_from_inventory(idx, slot["quantity"])
+        caller.remove_from_inventory(idx, 1)  # 只减 1，不是 slot["quantity"]
+        # 如果整堆用完，remove_from_inventory 已清理 slot
+        if caller.db.inventory[idx] is None:
+            self.delete()
         break
-self.delete()
 ```
+注意：
+- 传入 `1`（消耗量），**不是** `slot["quantity"]`（整堆数量）——后者会清空整堆
+- `remove_from_inventory` 会在 `slot["quantity"] <= quantity` 时自动将 slot 设为 None
+
+#### 模式 B：整堆消耗（秘籍等）— 一次用完整个堆叠
+```python
+# ✅ 正确：整堆消耗
+for idx, slot in enumerate(caller.db.inventory or []):
+    if slot and slot["dbref"] == self.id:
+        caller.remove_from_inventory(idx, slot["quantity"])
+        self.delete()
+        break
+```
+秘籍学习是一次性的——学会后整本秘籍不再需要，直接整堆清空。
+
+### 为什么两种模式不能混用
+把模式 A 传整堆数量（给 `remove_from_inventory` 传 `slot["quantity"]`）会导致：
+- 5 颗丹药，用 1 颗 → 整堆 5 颗全消失
+- 玩家损失 4 颗
+- `self.delete()` 删对象，但 slot 已被清空 → 看不出 bug
+
+**2026-06-25 实证案例：** `ElixirItem.use()` 只改了 `self.db.quantity` 没碰 slot。`bag` 显示读 slot，所以永远显示旧值。修复方案是将 `remove_from_inventory` 调用放在 `use()` 方法中（即模式 A）。
 
 ### 涉及的范围
-这种 bug 影响**所有消耗物品的 use() 方法**：
-- SkillBookItem.use() — 学习秘籍后消耗
-- ElixirItem.use() — 使用丹药后消耗
-- （如果有）TalismanItem.use() — 使用符箓后消耗
+这种 bug 影响**所有消耗物品的 use() 方法**，因为 `use()` 只接收 `self` 和 `caller`，默认只改自身属性：
+- **ElixirItem.use()** — 单颗消耗（丹药），需模式 A
+- **SkillBookItem.use()** — 整堆消耗（秘籍），需模式 B
+- **TalismanItem.use()** — 单颗消耗（符箓），需模式 A（如果实现）
 
-每个都需要用相同的模式修复。
+检查清单：每个 `use()` 实现都要确认它是否同步更新了 `caller.db.inventory` 中的 slot。
 
 ---
 
