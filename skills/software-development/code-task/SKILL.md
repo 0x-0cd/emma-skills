@@ -66,6 +66,20 @@ metadata:
 
 ---
 
+### 🗣️ 对话风格：用户的偏好
+
+代号「哥哥」的用户对以下习惯性表达**明确反感**：
+
+| ❌ 不要 | ✅ 要 |
+|:--------|:------|
+| "好问题"、"说得对"、"这个问题问得好" 等捧哏式开头 | 直接接正题，简洁利索 |
+| 先评价再回答的客套模式 | 直接给出信息或分析 |
+| 无意义的过渡句（"好嘞！"、"没问题！" 纯情绪词可以留，但别频繁） | 保留正常自然的口语化节奏，但删除拖沓的开场冗余 |
+
+> 当本 skill 被加载时，这条用户偏好会随记忆一同注入。如果开场话术中出现了捧哏式短语，停下，删掉，直入正题。
+
+---
+
 ## Phase 0：消歧
 
 在你做任何操作之前，先判断用户的需求是否足够明确。
@@ -568,6 +582,22 @@ for _d in (_MONEY, _EQUIP, _SKILL, _MATERIAL, _TALISMAN):
 
 用 `terminal()` 跑 `opencode run`。你需要**一次性提供所有信息**，不要分多次发送——这违背了"纯路由"原则（分多次发就等于你在中间做判断了）。
 
+### 派单前准备
+
+在 dispatch 给小弟之前，**先确认工作区是最新代码**：
+
+```bash
+git pull --rebase origin <分支名>
+```
+
+然后确认工作区干净（没有未提交的本地改动），避免小弟的改动和本地未提交的代码冲突：
+
+```bash
+git status --short
+```
+
+> **教训（2026-06-25 本 session）：** Emma 在被用户要求 dispatch 修复时，没有先 pull 最新代码就直接派单了。用户明确纠正「你先pull一下代码，再派小弟改」。如果本地不是最新的，小弟可能在旧代码基础上改动，导致合并冲突或重复工作。
+
 ### 调用格式
 
 ```bash
@@ -984,6 +1014,8 @@ weights = [max(a.get("rarity", 50), 1) for a in pool]
   - **路径:** `skill_view(name="code-task", file_path="references/evennia-global-script-pitfalls.md")`
 - `evennia-map-cards-flex-layout.md` — 地图面板十字卡片布局的 flex 陷阱。非对称横向出口（只有 west 或只有 east）导致 Center 卡片偏离竖线的根因，以及通过 JS 插入等宽 spacer 的修复方案。
   - **路径:** `skill_view(name="code-task", file_path="references/evennia-map-cards-flex-layout.md")`
+- `combat-reactive-effects.md` — 战斗管线受击触发效果（on_hit）扩展模式：DodgeStackEffect 设计、Effect hook 注册、管线改动清单、词条模板格式。
+  - **路径:** `skill_view(name="code-task", file_path="references/combat-reactive-effects.md")`
 
 ---
 

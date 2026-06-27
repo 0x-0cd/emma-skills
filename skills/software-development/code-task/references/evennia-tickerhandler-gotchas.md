@@ -108,3 +108,29 @@ Tickers with `interval < 1` raise `RuntimeError`. Floats are floored to int.
 - Evennia source: `evennia/scripts/tickerhandler.py`
 - Evennia 6.0.0 tag: https://github.com/evennia/evennia/tree/v6.0.0
 - Store_key serialization bug: https://github.com/evennia/evennia/issues/3759
+
+## Global Persistent Script LoopingCall Lost on Reload
+
+### Symptoms
+Global persistent scripts (MonsterRespawnScript, AggressionMonitorScript, etc.) exist in DB after reload (`search_script()` finds them), but `at_repeat()` never fires. Their ndb._task (memory LoopingCall) was lost but the script record survived.
+
+### Root Cause
+Evennia restores the script's DB record (interval, persistent flag) on reload, but does NOT automatically recreate the in-memory LoopingCall timer (ndb._task). The script is marked "running" but the ticker callback never gets scheduled.
+
+### Fix Pattern
+```python
+# at_server_startstop.py — at_server_start()
+scripts = search_script("my_script_name")
+if scripts:
+    scripts[0].start()    # ← Force recreate ndb._task
+else:
+    create_script("path.to.ScriptClass")
+```
+
+`script.start()` is idempotent when the LoopingCall is already running, and fixes it when it's missing. Apply to ALL global persistent scripts that use at_repeat().
+
+### Affected Scripts (XunDaoMUD)
+- MonsterRespawnScript (monster_respawn.py)
+- AggressionMonitorScript (aggression_monitor.py)
+- RelicPoolMonitor (relic_pool.py)
+- GameTimeScript (game_time.py)
