@@ -628,21 +628,59 @@ terminal(
 )
 ```
 
+### 🔴 全项目扫描会挂 —— 改用并行子 agent
+
+**不要用单次 OpenCode 调用来扫描整个项目（数百文件）。** 这种 monolithic 任务有两个风险：
+
+1. OpenCode 的 stdout 输出截断（50KB 上限），中间结果丢失
+2. 树莓派上偶发的 OpenCode 子进程僵死，不报错也不推进，你过了几小时才发现
+
+**替代方案：** 用 `delegate_task`（tasks 数组）拆成多个并行子 agent，每个 focused、scoped：
+
+```python
+# ❌ 不要这么干 — 单次扫描全项目，容易挂
+terminal(
+    command="opencode run '分析整个项目技术债...' --model ... --format json",
+    background=True, notify_on_complete=True,
+)
+
+# ✅ 正确做法 — 拆成独立维度并行
+delegate_task(tasks=[
+    {"goal": "扫描 🔴 阻塞级问题...", "toolsets": ["terminal", "file"]},
+    {"goal": "扫描 🟡 重度问题...", "toolsets": ["terminal", "file"]},
+    {"goal": "扫描 🟢 轻度问题...", "toolsets": ["terminal", "file"]},
+])
+```
+
+**典型拆分维度（2026-06-25 验证）：**
+- 按严重性分：🔴 阻塞级 / 🟡 重度 / 🟢 轻度
+- 按子系统分：战斗引擎 / 物品系统 / 命令层 / 世界数据
+- 按分析公式分：语法错误 / 运行时异常 / 循环依赖 / 硬编码
+
+**判断标准：** 如果分析范围覆盖 100+ 文件或 10000+ 行代码，必须拆分。每个子 agent 的 scope 应该能在 3-5 分钟内完成分析并输出结果。
+
+> **教训（2026-06-25 本 session）：** Emma 派小弟做全量技术债分析，单次 OpenCode 调用挂 7 小时后被 kill。拆成 3 个并行子 agent（🔴🟡🟢）后 3 分钟全部返回结果。
+
 ### 超时（进程真的挂了）的处理
 
-OpenCode 在 background 模式下跑完会自动通知你。如果长时间没收到通知，先查日志：
+OpenCode 在 background 模式下跑完会自动通知你。如果长时间没收到通知：
 
+**第一步：自查 OpenCode 日志**
 ```bash
 tail -50 ~/.local/share/opencode/log/opencode.log
 ```
 
-确认是"慢"还是"死了"：
+如果日志最后有持续的 loop step 更新，说明还在跑，继续等。如果日志停在某步且久无更新，说明僵死了。
+
+**第二步：联系用户确认时长** — 不要闷头等几个小时。如果超过 15 分钟没收到通知且用户没说话，主动问用户要不要查一下。如果用户主动问进度，立即自查并诚实回答，不要猜"应该还在跑"。
+
+**第三步：判断状态并行动**
 
 | 现象 | 日志特征 | 判断 | 措施 |
 |:----|:---------|:-----|:-----|
 | 正常的慢 | 日志持续有 loop step 增长 | 还在跑 | 继续等，别动 |
 | 真挂了 | 日志最后有 ERROR/异常，或长时间无更新 | 进程死了 | 查 git diff --stat 看有没有改到一半的文件，再决定是否重跑 |
-| 静默僵死 | 日志停在某步，没 ERROR 也没推进 | 树莓派上偶发的 OpenCode 子进程僵死 | 杀进程（`process action=kill`），然后手动收尾 |
+| 静默僵死 | 日志停在某步，没 ERROR 也没推进 | 树莓派上偶发的 OpenCode 子进程僵死 | 杀进程（`process action=kill`）→ 自查僵死原因（是不是任务太大？）→ 如果 scope 过大，换并行子 agent 策略重试。不要直接重新派同样的任务——它会再次僵死 |
 
 ### 多阶段任务
 
@@ -751,7 +789,16 @@ tail -50 ~/.local/share/opencode/log/opencode.log
 ...
 ```
 
-关键规则：
+**机械清理的例外：** 当任务是纯机械清理（删除未使用 import、补文件尾换行、删过时 TODO），且跨 5+ 文件时，**可以直接用 `patch`/`write_file` 直改，不走 OpenCode 派单**。理由：
+- 每个修改极小且无风险（`python -m py_compile` 验证即可）
+- 派小弟会产生与修复本身不成比例的开销（一次 dispatch 的 token 成本 > 实际改动的价值）
+- 修改不涉及业务逻辑判断，不需要小弟的推理能力
+
+流程：Emma 自己逐文件改 → 逐文件 `py_compile` 验证 → 一次性 `git add -A && git commit` → 推送前做 `git diff --stat` 汇总汇报。
+
+> **判断标准：** 如果每个改动是"删一行 import"或"末行加回车"级别的机械操作，且不涉及任何行为变化 → 直改。如果涉及代码逻辑判断（"这个 import 是不是真的未使用？"）→ 走 AST 扫描先验证，确认后再直改。
+
+**关键规则：**
 - **每个任务走一次完整的 code-task 流程**（消歧 → 判断 → 写 prompt → 执行），不做预先的全盘分析
 - **不要一次写多个任务的 prompt 然后批量发**——这等于你在替用户做优先级编排，违背纯路由原则
 - **等待 review 信号**——用户说"下一个"、确认 OK、或者主动推进，才算可以继续。用户没说话就是还在审
@@ -990,6 +1037,8 @@ weights = [max(a.get("rarity", 50), 1) for a in pool]
 
 ## 参考文件
 
+- `evennia-attribute-vs-field-access.md` — Evennia 的 Attribute 系统 (`db.*`) 与模型字段属性 (`.key`, `.aliases`, `.destination`) 的区别。误用 `room.db.key = "xxx"` 替代 `room.key = "xxx"` 会导致重启后 `db_key` 未变更的 data-loss bug。所有 Evennia 任务前先扫此文。
+  - **路径:** `skill_view(name="code-task", file_path="references/evennia-attribute-vs-field-access.md")`
 - `evennia-goldenlayout-routing.md` — Evennia 浏览器客户端消息路由链。涉及 GoldenLayout 插件链、消息类型路由规则、`updateMethod` 行为、Evennia 标记处理时机、自定义组件注册方式、flex 陷阱，以及 ASCII 文本 vs JSON 卡片两种面板方案的架构选择。
   - **路径:** `skill_view(name="code-task", file_path="references/evennia-goldenlayout-routing.md")`
 - `evennia-tickerhandler-gotchas.md` — Evennia TickerHandler 的 ndb store_key 陷阱。non-persistent ticker reload 后 ndb 丢失导致 ticker 孤儿化。
@@ -1014,8 +1063,12 @@ weights = [max(a.get("rarity", 50), 1) for a in pool]
   - **路径:** `skill_view(name="code-task", file_path="references/evennia-global-script-pitfalls.md")`
 - `evennia-map-cards-flex-layout.md` — 地图面板十字卡片布局的 flex 陷阱。非对称横向出口（只有 west 或只有 east）导致 Center 卡片偏离竖线的根因，以及通过 JS 插入等宽 spacer 的修复方案。
   - **路径:** `skill_view(name="code-task", file_path="references/evennia-map-cards-flex-layout.md")`
-- `combat-reactive-effects.md` — 战斗管线受击触发效果（on_hit）扩展模式：DodgeStackEffect 设计、Effect hook 注册、管线改动清单、词条模板格式。
-  - **路径:** `skill_view(name="code-task", file_path="references/combat-reactive-effects.md")`
+- `combat-reactive-effects.md` — 战斗管线受击触发效果（on_hit）扩展模式
+- `code-maintenance-checks.md` — 代码维护检查模式：AST 未用 import 检测、缺失换行扫描、Evennia 颜色一致性审计（分层法）、批量清理提交流程
+  - **路径:** `skill_view(name=\\"code-task\\", file_path=\\"references/code-maintenance-checks.md\\")`：DodgeStackEffect 设计、Effect hook 注册、管线改动清单、词条模板格式。
+  - **路径:** `skill_view(name=\"code-task\", file_path=\"references/combat-reactive-effects.md\")`
+- `opencode-session-management.md` — OpenCode session DB 位置、schema、清除命令。`~/.local/share/opencode/opencode.db`，`session`/`session_message`/`session_context_epoch` 表，CASCADE 删除 + VACUUM 回收空间。
+  - **路径:** `skill_view(name="code-task", file_path="references/opencode-session-management.md")`
 
 ---
 

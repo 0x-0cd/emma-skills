@@ -15,34 +15,27 @@ When you have multiple unrelated failures (different test files, different subsy
 
 ## When to Use
 
-```dot
-digraph when_to_use {
-    "Multiple failures?" [shape=diamond];
-    "Are they independent?" [shape=diamond];
-    "Single agent investigates all" [shape=box];
-    "One agent per problem domain" [shape=box];
-    "Can they work in parallel?" [shape=diamond];
-    "Sequential agents" [shape=box];
-    "Parallel dispatch" [shape=box];
-
-    "Multiple failures?" -> "Are they independent?" [label="yes"];
-    "Are they independent?" -> "Single agent investigates all" [label="no - related"];
-    "Are they independent?" -> "Can they work in parallel?" [label="yes"];
-    "Can they work in parallel?" -> "Parallel dispatch" [label="yes"];
-    "Can they work in parallel?" -> "Sequential agents" [label="no - shared state"];
-}
-```
-
 **Use when:**
 - 3+ test files failing with different root causes
 - Multiple subsystems broken independently
 - Each problem can be understood without context from others
 - No shared state between investigations
+- **Codebase analysis at scale:** full-project tech debt audit, architecture review, or cross-cutting concern scan (100+ files, 10000+ lines)
 
 **Don't use when:**
 - Failures are related (fix one might fix others)
 - Need to understand full system state
 - Agents would interfere with each other
+
+### Dimension-Based Splitting (for Codebase Analysis)
+
+When analyzing a large codebase, split by **orthogonal dimensions** rather than by file or by subsystem. Each dimension produces findings that can be independently verified and merged:
+
+| Good Dimensions | Bad Dimensions |
+|:---------------|:---------------|
+| Severity (🔴🟡🟢) — each agent scans the same files for different concerns | By file (agent A scans X, agent B scans Y) — you'll miss cross-cutting issues |
+| Concern type (security/performance/architecture/consistency) | By language (Python/JS/CSS) — structural problems cross languages |
+| Analysis formula (syntax errors / runtime paths / cycle detection / naming) | By commit author or date — artificial split with zero analytical value |
 
 ## The Pattern
 
@@ -88,6 +81,8 @@ Good agent prompts are:
 2. **Self-contained** - All context needed to understand the problem
 3. **Specific about output** - What should the agent return?
 
+### Debugging Prompt
+
 ```markdown
 Fix the 3 failing tests in src/agents/agent-tool-abort.test.ts:
 
@@ -109,6 +104,32 @@ Do NOT just increase timeouts - find the real issue.
 Return: Summary of what you found and what you fixed.
 ```
 
+### Codebase Analysis Prompt
+
+For analysis tasks, each agent gets the **same base context** (project structure, framework version, key files) but a **different analytical lens**. This prevents duplication of shared context while keeping each agent focused:
+
+```markdown
+## 分析任务
+扫描 XunDaoMUD 项目的 [维度] 问题。
+
+## 项目路径
+/home/qn/projects/XunDaoMUD
+
+## 背景事实（共享给所有子 agent）
+[project: Evennia 6.0.0, Python 3.12, SQLite, ~4万行]
+[codegraph: 1370 nodes / 2561 edges]
+[key architecture: layered cmdset, etc.]
+
+## 分析范围（每个 agent 不同的 lens）
+Scan all Python sources (exclude __pycache__/.venv/node_modules) for:
+- Agent A — 🔴 阻塞级: syntax errors, import cycles, runtime crash paths, PII
+- Agent B — 🟡 重度: god files >300 lines, duplicate code, hardcoded magic numbers, naming inconsistencies
+- Agent C — 🟢 轻度: stale comments, unused imports, small style drift
+
+## 交付要求
+每条发现附精确文件路径和行号范围。
+```
+
 ## Common Mistakes
 
 **❌ Too broad:** "Fix all the tests" - agent gets lost
@@ -122,6 +143,23 @@ Return: Summary of what you found and what you fixed.
 
 **❌ Vague output:** "Fix it" - you don't know what changed
 **✅ Specific:** "Return summary of root cause and changes"
+
+**❌ Single monolithic task for large scope:** "Analyze the whole project" in one agent
+**✅ Dimension-split:** Split by orthogonal axis (severity, concern type, analysis formula)
+
+### Silent-Hang Trap
+
+When a subagent task is too large (100+ files, 10000+ lines), the terminal-based dispatch (`opencode run --format json` via `terminal()`) can **silently hang** — no error logged, no progress, no crash. You won't know until the user asks or hours pass.
+
+**Prevention:** Any analysis covering the full project must use `delegate_task` with dimension-split, not a single `opencode run` call. `delegate_task` subagents have better isolation and output handling for large scopes.
+
+**Detection:** If a background process doesn't notify within 15 minutes, check the OpenCode log:
+```bash
+tail -50 ~/.local/share/opencode/log/opencode.log
+```
+Static log = silent hang. Kill it (`process action=kill`) and switch to dimension-split strategy.
+
+**Recovery:** After killing, check `git diff --stat` to ensure no half-written files were left behind, then re-dispatch as parallel subagents with smaller scopes.
 
 ## When NOT to Use
 
@@ -180,3 +218,10 @@ From debugging session (2025-10-03):
 - All investigations completed concurrently
 - All fixes integrated successfully
 - Zero conflicts between agent changes
+
+From codebase analysis session (2026-06-25):
+- Monolithic single-agent attempt hung for 7 hours (subagent process silent-hang)
+- Switched to 3 parallel agents: 🔴🟡🟢 severity dimensions
+- All 3 agents returned within 3 minutes
+- Zero overlap — each agent found different issues, no conflicts
+- Total context saved: ~150K tokens vs running serially

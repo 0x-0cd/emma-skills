@@ -227,6 +227,160 @@ def _init_skill_effects(self):
 
 ---
 
+## 🚧 Exit 拦截 + Item-Flag 通行模式
+
+### 场景
+
+当需要实现 **"从某房间的任何出口离开都要触发事件"** 且 **"使用特定物品后获得永久通行权"** 时，Evennia 中有成熟的实现模式。
+
+### 架构
+
+```
+┌──────────────────────────────────────────────┐
+│  at_traverse (exits.py)                       │
+│    ┌─ source_location.key == "清源河"           │
+│    │   ├─ db.qingyuan_river_ward 有?           │
+│    │   │   ├─ YES → 放行 + 提示                │
+│    │   │   └─ NO  → _do_river_intercept()      │
+│    │   │         ├─ 叙事文本                   │
+│    │   │         ├─ 检查怪物池 → 取1只/强制生成  │
+│    │   │         └─ 完整 CombatHandler 启动    │
+│    │   └─ (正常通行)                           │
+└──────────────────────────────────────────────┘
+```
+
+### 模式拆解
+
+#### 1. Room-Gated Exit Interception（房间门控出口拦截）
+
+在 `Exit.at_traverse` 中检查玩家的**当前所在房间**，而非 exit 上的属性：
+
+```python
+def at_traverse(self, traversing_object, target_location):
+    source_location = traversing_object.location
+    # ... tutorial_block 拦截 ...
+
+    # 清源河门控：检查房间名，不是 exit 属性
+    if source_location and source_location.key == "清源河":
+        if traversing_object.db.qingyuan_river_ward:
+            # 有标记 → 放行提示
+            traversing_object.msg(...)
+        else:
+            # 无标记 → 拦截 + 自动战斗
+            self._do_river_intercept(traversing_object, source_location)
+            return
+
+    # 原始通行逻辑...
+    if traversing_object.move_to(...):
+        self.at_post_traverse(...)
+```
+
+**判断标准：** 用 `source_location.key` 而非 `self.db.river_guard` 属性。当拦截逻辑与房间绑定（所有从该房间出去的 exit 都触发）而非与特定出口绑定时，房间名判读更简洁且不需要改 world_builder。
+
+#### 2. 自动战斗触发（复用 CmdBattle 模式）
+
+完整流程（参考 `commands/character/attack.py:100-130`）：
+
+```python
+def _do_river_intercept(self, traversing_object, source_location):
+    # 已有战斗 → 提醒
+    if traversing_object.ndb.combat_handler:
+        traversing_object.msg(...)
+        return
+
+    # 叙事提示
+    traversing_object.msg("河中怪鱼突然跃出水面...")
+
+    # 取怪物：优先从房间怪物池拿，池空则强制实例化
+    pools = source_location.db.monster_pools or {}
+    fish_data = pools.get("河中怪鱼")
+    if fish_data and fish_data.get("quantity", 0) > 0:
+        despawn_monsters(source_location, "河中怪鱼", 1)
+        monster = spawn_combat_monster("river_monster_fish", combat_id=1)
+    else:
+        monster = spawn_combat_monster("river_monster_fish", combat_id=1)
+
+    if not monster:
+        return
+
+    # 影子房间 + CombatHandler（完全复用 CmdBattle 流程）
+    shadow = create_shadow_room(source_location)
+    enter_shadow_room(traversing_object, shadow)
+    monster.move_to(shadow, quiet=True)
+    handler = CombatHandler(
+        player=traversing_object,
+        monsters=[monster],
+        shadow_room=shadow,
+        source_room=source_location,
+        template_keys={monster.key: "river_monster_fish"},
+        on_start=lambda: traversing_object.cmdset.add(...),
+        on_end=lambda: traversing_object.cmdset.delete(...),
+    )
+    handler.start()
+```
+
+**关键细节：**
+- `despawn_monsters` 参数用 **display_name**（"河中怪鱼"），不是 template_key
+- `spawn_combat_monster` 参数用 **template_key**（"river_monster_fish"）
+- 怪物池为空时（全被杀光还未刷新）直接 `spawn_combat_monster` 兜底，不阻塞玩家
+- 战斗结束后 `destroy_shadow_room` 自动将玩家送回源房间
+
+#### 3. Item-Flag 标记系统（elixir_effects marks 模式）
+
+在丹药效果系统中增加"标记"字段，使用后设置持久化 db 属性：
+
+**数据定义（`world/elixir_effects.py`）：**
+```python
+"凝神": {
+    "key": "凝神",
+    "desc": "凝神静气，稳固修为。",
+    "effect_type": "add_cultivation",
+    "effect_value": 500,
+    "marks": ["qingyuan_river_ward"],  # ← 新增
+},
+```
+
+**标记处理（`typeclasses/items/elixir_item.py`）：**
+```python
+# effect 主效果处理完成后...
+for mark_key in effect.get("marks", []):
+    setattr(caller.db, mark_key, True)
+```
+
+**数据流：** `elixir_effects.py` 定义 mark 列表 → `elixir_item.py` 通过 `setattr(caller.db, ...)` 写入 → `exits.py` 在 `at_traverse` 中读取 `db.qingyuan_river_ward`
+
+**注意事项：**
+- 标记必须是 `db.*`（持久化），不能用 `ndb.*`（服务器重启后丢失）
+- 同一个 effect 可以设置多个标记（`marks: ["flag_a", "flag_b"]`）
+- 标记名称使用带模块前缀的 snake_case（如 `qingyuan_river_ward`）
+
+### 适用场景
+
+- **区域门控**：玩家必须完成某事件才能通过
+- **Boss 前哨**：击败某怪物 + 使用信物后放行
+- **剧情锁**：脚本触发临时封锁，完成任务后标记放行
+
+### 边界情况
+
+| 场景 | 处理 |
+|------|------|
+| 玩家已在战斗中 | 提示"先结束当前战斗"，不触发拦截 |
+| 怪物池为空 | `spawn_combat_monster` 强制实例化 |
+| 玩家逃跑 | 回源房间，再次尝试仍触发 |
+| 掉落率不足100% | 允许多次触发直到获得道具 |
+| 标记已获得 | 放行提示+正常移动 |
+
+### 与 existing tutorial_block 模式的差异
+
+| 维度 | tutorial_block | river_intercept |
+|------|:-------------:|:---------------:|
+| 拦截条件 | exit 上的 `db.tutorial_block` 属性 | source_room 的 key 值 |
+| 触发行为 | 教学对话后原地不动 | 自动进入战斗 |
+| 通过条件 | 对话完成后即解除（一次性）| 永久 `db` 标记（永不过期）|
+| 覆盖范围 | 单个 exit | 来源房间的所有 exit |
+
+---
+
 ## 🔍 OpenCode 多文件交付的数据流验证
 
 ### 问题

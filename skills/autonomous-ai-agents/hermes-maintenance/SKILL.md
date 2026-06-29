@@ -1,7 +1,7 @@
 ---
 name: hermes-maintenance
 description: "Maintain Hermes Agent system-level dependencies: upgrade bundled Node.js, fix TUI npm install failures, handle ARM64-specific quirks (Electron downloads)."
-version: 1.3.0
+version: 1.4.0
 author: Emma
 license: MIT
 metadata:
@@ -516,11 +516,27 @@ sqlite3 state.db "SELECT id, title FROM sessions ORDER BY started_at;"
 
 **Pitfall: `$CURRENT` must be accurate** — double-check before running. If the ID is wrong, you'll delete the active session. Use `session_search()` (browse, no args) to confirm.
 
-**Also check OpenCode sessions** — if your workflow uses OpenCode CLI (`~/.opencode/bin/opencode`), old sessions may linger there:
+**Also check OpenCode sessions** — OpenCode stores session data in a SQLite database at `~/.local/share/opencode/opencode.db` (not `~/.config/opencode/`). Old sessions can accumulate (observed: 115 sessions, ~177 MB). Clean via direct SQL:
+
 ```bash
-~/.opencode/bin/opencode session list   # if >0, clean up
-opencode session delete <id>            # per-session, or let them auto-expire
+# 0. Check current state
+sqlite3 ~/.local/share/opencode/opencode.db "SELECT id, title, time_created, cost FROM session ORDER BY time_updated DESC LIMIT 5;"
+sqlite3 ~/.local/share/opencode/opencode.db "SELECT COUNT(*) FROM session;"
+
+# 1. Delete all sessions (cascades to session_message + session_context_epoch via FK CASCADE)
+sqlite3 ~/.local/share/opencode/opencode.db "PRAGMA foreign_keys = ON; DELETE FROM session;"
+
+# 2. Verify
+sqlite3 ~/.local/share/opencode/opencode.db "SELECT COUNT(*) FROM session; SELECT COUNT(*) FROM session_message;"
+
+# 3. VACUUM to reclaim disk space
+sqlite3 ~/.local/share/opencode/opencode.db "VACUUM;"
+
+# 4. Verify size
+ls -lh ~/.local/share/opencode/opencode.db
 ```
+
+**Schema notes:** `session_message` and `session_context_epoch` both have foreign keys with `ON DELETE CASCADE` to `session(id)` — so deleting from `session` automatically cascades. Always `PRAGMA foreign_keys = ON` first or the cascade won't fire. FTS/other tables (account, project, workspace) are untouched. This only clears conversation history/sessions. If the DB remains large (~156 MB after session cleanup), that's from project/account/workspace tables — not session data.
 
 #### Approach B — CLI (use when SQLite access is restricted)
 
