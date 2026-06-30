@@ -101,6 +101,32 @@ tags:
 - 查不到具体评分或对比时可以基于出版社口碑和译者资历给出判断，但要说明这是基于一般规律的推荐而非实测对比
 - **ISBN 直链大法**：如果搜索书名+豆瓣找不到页面，直接用 `https://book.douban.com/isbn/<ISBN>/` 访问豆瓣，这是最可靠的直达方式，比搜索书名更精准
 
+## 常见陷阱
+
+### web_search 超时 / 网络不可达
+
+web_search 在香港代理或某些网络环境下可能频繁超时，不要死磕。**两步兜底方案：**
+
+**第一步：用 curl 直搜豆瓣 Subject Search API**
+```bash
+curl -sL "https://book.douban.com/subject_search?search_text=<书名>+<译者>" \
+  -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+```
+从输出中提取 `subject/\d+` 得到豆瓣条目 ID。
+
+**第二步：用 web_extract 拉详情页**
+拿到 subject ID 后，用 `web_extract` 拉 `https://book.douban.com/subject/<ID>/`。豆瓣详情页包含：评分、评分分布、出版信息、内容简介、目录、原文摘录、短评精选、书评标题。直接从 web_extract 的 markdown 输出中提取关键信息即可。
+
+如果仍想搜索出版社/译者背景等补充信息，可尝试终端 `curl` + 百度搜索：
+```bash
+curl -sL "https://www.baidu.com/s?wd=<搜索词>" -H "User-Agent: Mozilla/5.0"
+```
+
+**注意**：curl 输出的豆瓣页面 HTML 可能不包含完整元数据，web_extract 渲染后的 markdown 更结构化，优先用后者。
+
+### 同一 ISBN 被多条豆瓣条目占用
+豆瓣的 ISBN 搜索并非严格一一对应，可能出现同一个 ISBN 返回错误书籍的情况。此时用 subject_search 按书名搜更可靠。
+
 ## 重要约束
 
 1. **不需要**告诉用户在哪买、在哪下载
