@@ -558,28 +558,76 @@ Expanding summary nodes from past sessions is not supported cross-session in cur
 
 **Goal:** Convert MEMORY.md from a fact dump to a pure 元记忆 (meta-memory) index. Identity/preferences stay inline; everything else becomes a pointer.
 
-**CRITICAL: Verify-before-replace rule.** This is the most common failure mode — proposing a pointer without confirming the target data exists at the destination. Every pointer replacement MUST be preceded by a verification step.
+**Two execution strategies** — pick the right one based on how many entries are being moved:
+
+#### Strategy A: Per-Entry Conversion (≤5 entries to move)
+
+Best for incremental maintenance where only a few entries need relocation. Follows the original verify-before-replace cycle per entry.
 
 ```
 1. Read current MEMORY.md content via memory(action='list', target='memory')
-2. Classify each entry by function:
-   - Identity/communication constraints → KEEP inline (pointer to memory:user)
-   - Security/privacy rules → KEEP inline (must be visible every turn)
-   - Tool details (paths, commands, config) → MOVE to fact_store, replace with pointer
-   - Project records (repos, migration tools) → MOVE to fact_store, replace with pointer
-   - Reference data (pricing, model specs) → MOVE to fact_store, replace with pointer
-   - Workflow rules → KEEP inline (or move to a skill if complex)
-3. For each entry being MOVED to fact_store:
-   a. ADD the fact to fact_store: `fact_store(action='add', content='...', ...)`
-   b. VERIFY it landed: `fact_store(action='search', query='keyword')`
-   c. ONLY IF the search returns the expected content → proceed to create the pointer
-   d. If search returns nothing → the entity annotation may be wrong; fix and re-add
+2. Classify each entry by function (see Strategy B for classification guide)
+3. For each entry being MOVED:
+   a. ADD the fact to fact_store first
+   b. VERIFY it landed via `fact_store(action='probe', entity='EntityName')`
+   c. ONLY IF probe returns the expected content → create the pointer in memory
+   d. If probe returns nothing → entity annotation may be wrong; fix and re-add
 4. Format survivors as emoji + entity + pointer (see Content Strategy above)
 5. Remove the old inline content from MEMORY.md
-6. Measure: record MEMORY.md char count before and after, verify retrieval still works
+6. Measure: record char count before and after
 ```
 
-**Step 3 (verify-before-replace) is NOT optional.** Without it, a pointer in MEMORY.md silently dead-ends — the agent reads "→ fact_store search('reading')" but the target doesn't exist. The data becomes recoverable only via LCM session backups, which is unreliable and costly. If in doubt, keep the inline content AND add the pointer side-by-side until verification confirms both paths work.
+#### Strategy B: Batch Conversion (6+ entries to move, or full conversion from >80% to <50%)
+
+**Faster than per-entry cycling** because it separates the fact_store work (independent) from the memory work (sequential). The order matters:
+
+```
+1. Read current MEMORY.md content via memory(action='list', target='memory')
+2. Classify every entry into three buckets:
+   - KEEP inline — identity, security, privacy, workflow rules (must be visible every turn)
+   - MOVE to fact_store — tool paths, project details, reference data, environment info, health
+   - REMOVE entirely — completed tasks, outdated history, duplicates
+3. BATCH-ADD all MOVE entries to fact_store (parallel — independent calls)
+   - Annotate each with "EntityName" in double quotes for HRR detectability
+   - Use meaningful categories and comma-separated tags
+4. BATCH-VERIFY with probe() calls for key entities
+   - `fact_store(action='probe', entity='EntityName')`
+   - If any probe misses → fix the annotation and re-add that entry
+5. BATCH-REMOVE all old memory entries (parallel — independent)
+   - Each call uses old_text to uniquely identify the entry
+   - Batch up to 6 removes per tool invocation
+   - This frees capacity for the new compact format
+6. BATCH-ADD all new compact pointer entries (parallel)
+   - Inline rules as full sentences with emoji prefixes
+   - Pointers as `emoji Entity→fact_store probe/search('keyword')`
+7. Measure: record char count and entry count before and after
+```
+
+**Why Strategy B is faster:** fact_store additions and memory removals are both parallelizable (independent tool calls). The per-entry cycling in Strategy A makes 3 calls per entry (add→verify→remove old→add new), while Strategy B does the entire conversion in 4-6 batch rounds regardless of entry count.
+
+#### Classification Guide
+
+```
+- Identity/communication constraints → KEEP inline (pointer to memory:user)
+- Security/privacy rules → KEEP inline (must be visible every turn)
+- Workflow rules needed every turn → KEEP inline (compressed)
+- Tool details (paths, commands, config) → MOVE to fact_store, replace with pointer
+- Project records (repos, migration tools) → MOVE to fact_store, replace with pointer
+- Reference data (pricing, model specs) → MOVE to fact_store, replace with pointer
+- Environment info (deployment, paths) → MOVE to fact_store, replace with pointer
+- Health info, personal facts → MOVE to fact_store, replace with pointer
+- Historical/completed task records → REMOVE entirely
+```
+
+#### Verification Best Practice
+
+Use **`probe()`** (not `search()`) for verifying entity-annotated facts. probe() uses HRR algebra to match structured entities; search() uses FTS5 keyword matching and can miss entries due to tokenizer quirks (especially with Chinese content or the `|` OR operator).
+- After batch-add, run `fact_store(action='probe', entity='关键实体')` for each core entity
+- Only proceed to memory cleanup if probe() confirms the tip is retrievable
+
+**CRITICAL: Verify-before-replace rule.** This is the most common failure mode — proposing a pointer without confirming the target data exists at the destination. Every pointer replacement MUST be preceded by a verification step.
+
+Without verification, a pointer in MEMORY.md silently dead-ends — the agent reads "→ fact_store search('reading')" but the target doesn't exist. The data becomes recoverable only via LCM session backups, which is unreliable and costly. If in doubt, keep the inline content AND add the pointer side-by-side until verification confirms both paths work.
 
 ### Phase 3: fact_store Deduplication
 
