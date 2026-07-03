@@ -114,6 +114,8 @@ Task / Request arrives
 │
 ├── Research & Learning
 │   ├── Book reading guide?                          → book-reading-guide
+│   ├── Self-directed learning plan?                 → productivity:self-directed-learning-framework
+│   ├── Pulse learning challenge (评级+限时+奖章)?   → education:pulse-learning-method
 │   ├── Search arXiv papers?                         → arxiv
 │   ├── Deep-dive into a paper?                      → paper-deep-dive
 │   ├── Validate a claim / hypothesis?               → research-backed-validation
