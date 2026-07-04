@@ -174,3 +174,8 @@ Create a structured markdown file if user wants it saved/sent. Include:
 - `paper-deep-dive` — Deep analysis of a single academic paper (complementary; use after this skill identifies a key paper)
 - `research-backed-validation` — Validate a specific claim or hypothesis (use when user wants to fact-check a specific claim)
 - `himalaya` — Email delivery of the markdown plan as attachment (pipe .md file as `cat plan.md | himalaya template send`)
+
+## Reference Files
+
+- `references/acute-pancreatitis-evidence.md` — Evidence synthesis on acute pancreatitis risks, outcomes, and lifestyle guidance
+- `references/coffee-health-evidence.md` — Comprehensive evidence synthesis on coffee health effects: all-cause mortality, CVD, gastrointestinal effects, sleep, anxiety, genetic variability, timing effects
