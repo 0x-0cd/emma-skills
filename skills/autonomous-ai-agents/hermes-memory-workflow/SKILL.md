@@ -219,11 +219,12 @@ Run periodically (trigger: when fact_store exceeds ~100 entries, or user says "�
 ### Detection Patterns
 | Pattern | What to Look For | Resolution |
 |---------|-----------------|------------|
-| Exact duplicate | Same content text | Remove one (UNIQUE constraint catches this on add) |
-| Near duplicate | Slightly different wording of same fact | Keep the more detailed/updated version |
-| Triple repetition | 3+ entries about same repo/tool | Merge into one fully-annotated entry |
-| English + Chinese | Same rule in EN + ZH | Keep ZH (user's primary), remove EN |
-| Outdated vs updated | Older and newer version of same info | Keep latest, remove older |
+| **Exact duplicate** | Same content text | Remove one (UNIQUE constraint catches this on add) |
+| **Near duplicate** | Slightly different wording of same fact | Keep the more detailed/updated version |
+| **Triple repetition** | 3+ entries about same repo/tool | Merge into one fully-annotated entry |
+| **English + Chinese** | Same rule in EN + ZH | Keep ZH (user's primary), remove EN |
+| **Outdated vs updated** | Older and newer version of same info | Keep latest, remove older |
+| **Circular navigation hint** | Fact content is just `"🏷️ Entity→fact_store search('...')"` — a pointer telling the agent to search the same store it's stored in. These are navigation hints that belong in MEMORY.md (where they're injected every turn), not in fact_store. Storing them here creates a dead-end reference that wastes retrieval slots and never provides actual information. | **Remove** — the target data either exists as separate substantive facts or doesn't exist at all. If the data doesn't exist and the hint was the only entry, the pointer was dead all along. |
 
 ### Step-by-Step Procedure
 

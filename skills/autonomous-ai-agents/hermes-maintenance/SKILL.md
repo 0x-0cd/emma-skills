@@ -1,7 +1,7 @@
 ---
 name: hermes-maintenance
-description: "Maintain Hermes Agent system-level dependencies: upgrade bundled Node.js, fix TUI npm install failures, handle ARM64-specific quirks (Electron downloads)."
-version: 1.4.0
+description: "Maintain Hermes Agent system-level dependencies: upgrade bundled Node.js, fix TUI npm install failures, handle ARM64-specific quirks (Electron downloads), and post-update health verification."
+version: 1.5.0
 author: Emma
 license: MIT
 metadata:
@@ -16,9 +16,142 @@ metadata:
 > 🌐 参考文件：`references/chinese-web-sources.md` — 中文互联网信息源（热搜、科技资讯、社区评测）
 > 🐶 参考文件：`references/gateway-watchdog.md` — Gateway 心跳保活脚本（system crontab）
 
-System-level maintenance tasks for Hermes Agent: upgrading its bundled Node.js, fixing npm/TUI issues, and working around ARM64-specific pitfalls.
+System-level maintenance tasks for Hermes Agent: upgrading its bundled Node.js, fixing npm/TUI issues, working around ARM64-specific pitfalls, and verifying system health after updates.
 
 ---
+
+## Post-Update Health Verification
+
+Run this checklist after `hermes update` (or any major Hermes change) to confirm the system is healthy. Each step identifies a specific subsystem — if it fails, the linked section or issue has the fix.
+
+### 1. Version & Freshness
+
+```bash
+hermes version            # Expected: matches the latest release tag
+hermes update --check     # Expected: "Already up to date."
+pip show hermes-agent     # Confirm version matches
+```
+
+If `hermes update --check` shows an available update, run `hermes update`.
+
+### 2. Configuration Integrity
+
+```bash
+hermes config show        # Verify model, provider, and key paths
+hermes config check       # Expected: no REQUIRED items missing
+```
+
+If `hermes config check` reports "Config version: X → Y (update available)", it's a normal schema migration — run `hermes config migrate` if the user okays it.
+
+**Known issue: `hermes doctor` timeout (GitHub #35838)**
+- `hermes doctor` may hang for 30+ seconds when `models.dev` is unreachable and the local cache is stale
+- **Workaround:** `touch ~/.hermes/models_dev_cache.json` to refresh the timestamp
+- Root cause: `agent.models_dev.get_provider_info()` blocks synchronously when the remote metadata endpoint times out but the local cache exists and is considered stale. The issue is open with a stale-while-revalidate fix being discussed.
+
+### 3. Skills & Plugins
+
+```bash
+hermes skills list        # Check all expected skills are present and enabled
+hermes plugins list       # Verify enabled plugins (hermes-lcm, rtk-rewrite, etc.)
+```
+
+- Count total skills (expected: ~115-120 with default Hermes hub install)
+- Verify custom/agent-created skills aren't missing
+- **Cross-profile guard:** editing another profile's skills/plugins requires `cross_profile=true`
+
+### 4. Cron Jobs
+
+```bash
+hermes cron list          # Verify all scheduled jobs are active
+```
+
+Each job should show `[active]`, a valid schedule, and `Last run: ... ok`. If a job's script references `~/.hermes/scripts/`, note that the runtime resolves paths under `$HERMES_HOME/scripts/` — documentation may lag (GitHub #51765, cosmetic only).
+
+### 5. Memory System
+
+```bash
+hermes memory status      # Expected: provider=holographic, status=available ✓
+```
+
+Also verify fact_store is accessible (call `fact_store` with `action='list'` or `action='search'`). If error: check `~/.hermes/memory_store.db` existence and permissions.
+
+### 6. Gateway
+
+```bash
+systemctl --user status hermes-gateway   # Expected: active (running)
+```
+
+**Known issue: "Installed gateway service definition is outdated" (GitHub #41119, #46276)**
+- On systemd < 250, unsupported `RestartMaxDelaySec`/`RestartSteps` directives cause a false positive (#41119)
+- Multi-profile setups can have PATH mismatch between install and check contexts (#46276)
+- Both are cosmetic — the service runs fine. Fix: `hermes gateway restart` refreshes the unit.
+
+Also check gateway logs for persistent errors:
+```bash
+systemctl --user status hermes-gateway --no-pager | tail -20
+```
+
+Look for:
+- `WebSocket closed: code=4009 reason=Session timed out` on QQ bot — normal, auto-reconnects
+- Repeated `ERROR` or `CRITICAL` messages — investigate
+
+### 7. LCM (Lossless Context Management)
+
+```bash
+# Call the lcm_status system tool — checks engine, database, config, lifecycle
+lcm_status
+```
+
+Expected output shows:
+- `engine: lcm`, `plugin_version` matching the installed hermes-lcm version
+- `database_integrity: pass`
+- `sqlite_storage: pass` (journal_mode=wal)
+- `context_pressure: pass` (should be well below 50%)
+
+**LCM lifecycle fragmentation warnings** are normal after session pruning. Categories to ignore:
+- `stale_lifecycle_current` — old lifecycle rows referencing deleted sessions
+- `lcm_message_sessions_without_lifecycle_reference` — retained historical context
+- `lcm_message_sessions_missing_in_state` — imported context from before Hermes state DB tracking
+
+Only take action if fragmentation is >200 stale references. See Session Store Maintenance section for cleanup procedure.
+
+### 8. Cross-Reference Errors with GitHub Issues
+
+For any error encountered, search the Hermes repo:
+```bash
+gh issue list --repo NousResearch/hermes-agent --state open --search "<error keywords>"
+```
+
+Common post-update errors and their issue trackers:
+
+| Symptom | Likely Issue | Status |
+|---------|-------------|--------|
+| `hermes doctor` timeout / hangs | #35838 — models.dev stale cache blocking | OPEN, workaround available |
+| Gateway "service outdated" warning | #41119 — systemd < 250 compat / #46276 — PATH mismatch | OPEN, cosmetic |
+| Cron script path errors | #51765 — docstring vs runtime path discrepancy | OPEN, runtime works correctly |
+| `hermes tools` requires interactive terminal | Not a bug — tools management requires a TTY by design | Won't fix |
+
+### 9. Summary Report
+
+Compile findings into a structured table for the user:
+
+| Subsystem | Status | Notes |
+|-----------|--------|-------|
+| Hermes version | ✅ v0.18.0 | Up to date |
+| Config | ✅ | Valid |
+| Skills | ✅ 116 loaded | All expected |
+| Plugins | ✅ hermes-lcm + rtk-rewrite | Enabled |
+| Cron | ✅ 2 jobs active | Both running OK |
+| Memory | ✅ holographic | 178 facts |
+| Gateway | ✅ running | Minor: outdated unit warning (cosmetic) |
+| LCM | ✅ pass | Fragmentation: benign |
+
+If all pass → report "Update successful, all systems normal."
+If any fail → report findings, link to the relevant issue, and offer the workaround.
+
+---
+
+
 
 ## Upgrading Bundled Node.js
 
