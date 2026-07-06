@@ -1,7 +1,7 @@
 ---
 name: evidence-based-health-analysis
 description: "Search medical literature (PubMed, clinical guidelines), extract evidence from cohort studies, synthesize multi-source findings, and produce personalized health risk assessments + actionable plans."
-version: 1.0.0
+version: 1.1.0
 author: Emma
 tags: [health, medical-research, evidence-based, risk-assessment, patient-education, lifestyle-medicine]
 ---
@@ -17,6 +17,7 @@ Trigger conditions (any of these):
 - User provides a patient profile and asks for risk analysis + lifestyle guidance
 - User shares lab/imaging results and asks for interpretation + action plan
 - User asks "what does the research say about X" in a health/medical context
+- User asks general health/wellness/lifestyle science questions (metabolism, diet, exercise, sleep, longevity, energy levels, etc.)
 - User has a personal or family health history and wants evidence-based preventive guidance
 
 Do NOT use for:
@@ -50,6 +51,33 @@ Search in this priority order:
    ```
    <condition> systematic review meta-analysis
    ```
+
+### Search Reliability & Fallback Strategy
+
+**DuckDuckGo (`web_search`) frequently times out** on both English and Chinese health queries, especially through VPN/proxy. Do NOT retry more than once — switch to `web_extract` on known authoritative sites immediately.
+
+**Authoritative sites for direct extraction (web_extract):**
+
+| Site | Type | Best For |
+|------|------|----------|
+| `pubmed.ncbi.nlm.nih.gov` | Search results page | PubMed abstract discovery |
+| `pmc.ncbi.nlm.nih.gov` | Full-text PMC articles | Free full-text papers |
+| `www.health.harvard.edu` | Harvard Health | Wellness, lifestyle, metabolism, disease overviews |
+| `www.mayoclinic.org` | Mayo Clinic | Clinical condition guides, patient education |
+| `ods.od.nih.gov` | NIH Office of Dietary Supplements | Supplement/nutrition evidence (industry-neutral) |
+| `www.nhs.uk` | UK National Health Service | Evidence-based healthy living guides |
+| `www.chinanews.com.cn/jk/` | China News Health Section | Chinese-language health science articles |
+| `m.thepaper.cn` | The Paper (澎湃) | Chinese-language health/lifestyle features |
+
+**Parallel search pattern (batch independent queries):**
+```
+Round 1: Direct topic search (EN)        — web_search, if fail → web_extract
+Round 2: Direct topic search (ZH)        — web_search, if fail → web_extract
+Round 3: Authoritative site extraction   — web_extract on known URLs above
+Round 4: Academic/PubMed extraction      — web_extract on pubmed search results
+```
+
+Run rounds 1-2 in parallel (they're independent), then 3-4 based on what was found. This minimizes turns lost to timeouts.
 
 ### Phase 2: Evidence Extraction
 
@@ -168,6 +196,8 @@ Create a structured markdown file if user wants it saved/sent. Include:
 8. **Chinese guideline content may be behind paywalls** (yiigle.com). Use web_search + web_extract; if blocked, note the limitation.
 9. **Avoid "WebMD-style" oversimplification** — the user asked for authoritative research, not pop-science.
 10. **Always distinguish "correlation" from "causation"** in the write-up.
+11. **web_search (DuckDuckGo) is unreliable** through VPN/proxy — it frequently times out on both EN and ZH queries. After the first timeout, switch to web_extract on authoritative sites (see Search Reliability section above). Do NOT retry 3+ times.
+12. **Parallel search ≠ loading all at once** — Batch independent searches in the same turn, but limit to 3-4 web calls per turn to avoid timeouts on all of them simultaneously. If one call times out, the others may still return.
 
 ## Related Skills
 
@@ -179,3 +209,4 @@ Create a structured markdown file if user wants it saved/sent. Include:
 
 - `references/acute-pancreatitis-evidence.md` — Evidence synthesis on acute pancreatitis risks, outcomes, and lifestyle guidance
 - `references/coffee-health-evidence.md` — Comprehensive evidence synthesis on coffee health effects: all-cause mortality, CVD, gastrointestinal effects, sleep, anxiety, genetic variability, timing effects
+- `references/basal-metabolic-rate-evidence.md` — Evidence synthesis on basal metabolic rate determinants, relationship to "high energy" / NEAT, and science-backed interventions to increase BMR
