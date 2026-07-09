@@ -15,6 +15,7 @@ metadata:
 > ⚡ 参考文件：`references/session-maintenance.md` — Session 数据库清理与优化
 > 🌐 参考文件：`references/chinese-web-sources.md` — 中文互联网信息源（热搜、科技资讯、社区评测）
 > 🐶 参考文件：`references/gateway-watchdog.md` — Gateway 心跳保活脚本（system crontab）
+> 🔍 参考文件：`references/web-search-backend-troubleshooting.md` — 搜索后端（ddgs/exa/tavily）故障排查与切换
 
 System-level maintenance tasks for Hermes Agent: upgrading its bundled Node.js, fixing npm/TUI issues, working around ARM64-specific pitfalls, and verifying system health after updates.
 
