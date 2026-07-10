@@ -161,6 +161,89 @@ Static log = silent hang. Kill it (`process action=kill`) and switch to dimensio
 
 **Recovery:** After killing, check `git diff --stat` to ensure no half-written files were left behind, then re-dispatch as parallel subagents with smaller scopes.
 
+## Variation: Structured Content Generation (Tutorials, Docs, Guides)
+
+When the user asks for a large multi-chapter document (tutorial, guide, blog series, documentation), **parallel content generation with dimension-split by chapter** is the most efficient pattern. Each sub-agent writes independent chapters to disk simultaneously.
+
+### Pattern Diagram
+
+```
+User request → "Write a 6-chapter tutorial"
+                │
+                ├─ Parent: writes Chapter 1 (intro/outline) + handles compilation + delivery
+                │
+                ├─ Sub-agent 1: Chapters 2-3 (each to its own file)
+                ├─ Sub-agent 2: Chapters 4-5
+                └─ Sub-agent 3: Chapters 6-8 (remaining + appendix)
+```
+
+### Key Differences from Debugging/Analysis Splits
+
+| Aspect | Debugging Split | Content Generation Split |
+|--------|----------------|--------------------------|
+| Goal | Find root cause and fix | Write prose to a consistent standard |
+| Shared context | Codebase structure, error messages | Audience, tool chain, writing style, constraints |
+| Each agent's scope | One test file or subsystem | One or two chapters |
+| Output | Summary of findings | Markdown file(s) on disk |
+| Conflict risk | Agents editing same file | None — each writes to separate files |
+| Verification | Run full test suite | Read files, check style and coverage |
+
+### Context Structure for Each Agent
+
+Each sub-agent needs the **same base context** (audience, tools, constraints, overall workflow) but a **different chapter-specific context**. Package it as:
+
+```
+## Base context (shared across ALL agents)
+- Audience: complete beginners / professionals / etc.
+- Recommended tools: [list with download links and prices]
+- Constraints: don't recommend X, use Y instead
+- Overall workflow/structure: [the master sequence]
+- Writing style: tone, formatting, terminology conventions
+
+## Your chapter(s)
+- File path: /path/to/output/02_chapter_title.md
+- Content requirements: [specific topics to cover, word count ranges]
+- Key principles/constraints specific to this section
+```
+
+### Flow
+
+1. **Parent prepares**: creates output directory, writes Chapter 1 (outline + intro), crafts sub-agent tasks with carefully separated context
+2. **Sub-agents write**: each writes its assigned chapter(s) to files in the shared output directory
+3. **Parent compiles**: verifies all files exist, reads snapshots for quality, assembles final package
+4. **Parent delivers**: email with attachments, file transfer, or direct presentation
+
+### Pitfalls
+
+- **Overlapping content** between adjacent chapters: each agent's instructions must clearly state boundaries ("Chapter 2 covers X; Chapter 3 covers Y that follows X — do NOT include Y in Chapter 2")
+- **Style inconsistency**: all agents must share the same style guidance (tone, formatting conventions, terminology). Without this, compiled chapters feel like different authors
+- **File naming convention**: enforce `NN_name.md` in all agent prompts so the parent can glob them predictably
+- **Cross-references**: don't let agents write "as covered in Chapter 5" — chapter numbers may shift. Use self-contained references
+- **Total output size**: 3 agents x 2 chapters each is comfortable for the parent's context. For 10+ chapters, stagger dispatch or batch differently
+- **Sub-agent tool restrictions**: leaf agents cannot use delegate_task, clarify, or memory. They CAN use write_file, terminal, read_file, search_files. Design their task so they can complete it with those tools
+
+### Real-World Example (2026-07-10)
+
+**Request:** "Write a complete photo editing tutorial for Chinese beginners, 8 chapters. No Photoshop. Deliver as markdown files via email."
+
+**Dispatch:**
+- Parent (Emma): Chapter 1 (intro, tools, concepts) + compilation + SMTP delivery
+- Sub-agent 1: Chapters 2 (basic editing: crop, exposure, white balance) + 3 (skin retouching)
+- Sub-agent 2: Chapters 4 (body reshaping) + 5 (color grading with HSL/curves)
+- Sub-agent 3: Chapters 6 (export and sharpening) + 7 (complete walkthrough) + 8 (FAQ/appendix)
+
+**Results:** All 8 chapters written in ~2 minutes wall-clock, ~74KB total across 8 files. Compiled, verified, and emailed with 8 attachments. Zero style conflicts because all agents received the same writing-style guidelines in their shared context.
+
+### When to Use This vs. Sequential Writing
+
+| Situation | Approach |
+|-----------|----------|
+| 3+ independent sections with clear boundaries | Parallel — fastest |
+| Content builds on previous sections (tutorial series) | Sequential — later sections need earlier ones |
+| User wants iterative review per chapter | Sequential — one at a time, get feedback |
+| You have specialized knowledge sub-agents lack | Write it yourself |
+| Short document (fewer than 3 sections) | Write it yourself — dispatch overhead not worth it |
+
 ## When NOT to Use
 
 **Related failures:** Fixing one might fix others - investigate together first
