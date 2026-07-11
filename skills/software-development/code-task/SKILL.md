@@ -1,7 +1,7 @@
 ---
 name: code-task
 description: "通用路由 Skill：所有代码任务（写代码、改代码、修 Bug、重构、分析、设计等）强制路由到 OpenCode。Emma 不做分析、不写代码、不干扰小弟判断。消除歧义、自动选模型。无例外。"
-version: 3.15.0
+version: 3.16.0
 author: Emma
 platforms: [linux]
 metadata:
@@ -30,7 +30,7 @@ metadata:
 - **技术债分析** — "扫一下代码中的技术债"
 - **架构审查** — "检查项目架构是否合理"
 
-> 无论是改代码还是分析，本 skill 走同一路由流程：**消歧 → 判断任务类型/选模型 → 写 prompt → 执行**。区别在 prompt 结构和模型选择。
+> 无论是改代码还是分析，本 skill 走同一路由流程：**准备检查 → 消歧 → 判断任务类型/选模型 → 写 prompt → 执行**。区别在 prompt 结构和模型选择。
 
 ### 不做的事
 - ❌ 不分析根因（Emma 不分析，交给小弟）
@@ -80,7 +80,82 @@ metadata:
 
 ---
 
-## Phase 0：消歧
+## Phase 0：开工前准备检查
+
+当用户说「继续开发XX项目」、「检查开发环境」、「看看准备得怎样了」等无具体任务的开场白时——**在进入消歧之前，先做一轮环境就绪检查。**
+
+检查结果按「✅ / ⚠️ / ❌」三级汇报，清晰呈现当前状态，让用户知道能不能直接开工。
+
+### 准备检查清单
+
+按以下顺序执行，**每步都要有实际工具输出支撑**，不能凭记忆回答：
+
+```text
+1. OpenCode CLI 是否正常
+   → ~/.opencode/bin/opencode run 'ping' --format json
+   → 确认返回 pong，检查用时和 token 消耗
+
+2. 项目 Git 状态
+   → git log --oneline -5（看最新进展）
+   → git status --short（确认工作区干净）
+   → git describe --tags（看最新版本/标签）
+
+3. 项目能否导入
+   → python -c "from <项目包> import __version__; print(__version__)"
+   → 确认模块结构完整（ls src/ 或对应路径）
+
+4. 关键依赖是否安装
+   → 读 pyproject.toml 的 [project.dependencies]
+   → 逐个尝试 import（不是 pip list——import 才能验证真的可用）
+   → 缺的依赖立即装：pip install <pkg> 或 http_proxy=... pip install <pkg>
+
+5. 核心测试是否通过
+   → 跑最快的小测试（不是全量，先做 smoke test）
+   → 发现超时的测试文件，拆成单文件跑缩小范围
+   → 汇报通/挂的数量
+
+6. 相关技能已加载
+   → code-task（路由小弟）
+   → code-project（Git/PII 规范）
+   → TDD 等（按项目需要）
+```
+
+### 检查结果汇报模板
+
+```markdown
+### ✅ / ⚠️ / ❌ 开发环境就绪检查
+
+| 检查项 | 状态 | 说明 |
+|:------|:----:|:-----|
+| OpenCode CLI | ✅ | ping → pong，用时 Xs |
+| Git 状态 | ✅ | 最新 commit: xxx，工作区干净 |
+| 模块导入 | ✅ | Mneme v0.1.0 import OK |
+| 关键依赖 | ✅ | onnxruntime/transformers/etc. |
+| 核心测试 | ✅ | 154 tests passed / N timeout |
+| 编码技能 | ✅ | code-task + code-project + TDD |
+
+**结论：环境就绪，可以开工。** / **⚠️ 以下问题需要先处理：...**
+```
+
+### 什么时候跳过
+
+- 用户已经给出了明确的具体任务（「修这个 bug」），不需要做环境全景检查——直接进 Phase 1 消歧
+- 用户刚在同 session 里做过 readiness check，且没有切换项目——不需要重复
+- 用户只说了一个简单操作（「帮我读一下这个文件」）——不涉及代码修改，不走本流程
+
+### 安装依赖的超时处理
+
+部分 ML 依赖（sentence-transformers、onnxruntime、transformers 等）下载可能耗时较久：
+
+- **用 background + notify_on_complete** 安装大型依赖，不等它完成就继续检查其他项
+- 超过 2 分钟的安装一律进 background，避免阻塞整个 readiness check
+- 安装完成后记录结果，备查
+
+> **本 session（2026-07-12 Mneme 开工检查）验证：** sentence-transformers 非必须（Mneme 实际用 onnxruntime + transformers），300s+ 超时后 kill；onnxruntime 等改用 proxy 后 326s 成功安装。核心测试 154 pass 确认项目健康。
+
+---
+
+## Phase 1：消歧
 
 在你做任何操作之前，先判断用户的需求是否足够明确。
 
@@ -134,7 +209,7 @@ metadata:
 
 ---
 
-## Phase 1：判断任务类型与模型选择
+## Phase 2：判断任务类型与模型选择
 
 任务明确后，先判断是**分析类**还是**代码修改类**，再选模型。
 
@@ -213,7 +288,7 @@ metadata:
 
 ---
 
-## Phase 2：写 High-Signal Prompt
+## Phase 3：写 High-Signal Prompt
 
 ### 🧑‍💻 代码修改 prompt 结构
 
@@ -578,7 +653,7 @@ for _d in (_MONEY, _EQUIP, _SKILL, _MATERIAL, _TALISMAN):
 
 ---
 
-## Phase 3：执行
+## Phase 4：执行
 
 用 `terminal()` 跑 `opencode run`。你需要**一次性提供所有信息**，不要分多次发送——这违背了"纯路由"原则（分多次发就等于你在中间做判断了）。
 
@@ -799,7 +874,7 @@ tail -50 ~/.local/share/opencode/log/opencode.log
 > **判断标准：** 如果每个改动是"删一行 import"或"末行加回车"级别的机械操作，且不涉及任何行为变化 → 直改。如果涉及代码逻辑判断（"这个 import 是不是真的未使用？"）→ 走 AST 扫描先验证，确认后再直改。
 
 **关键规则：**
-- **每个任务走一次完整的 code-task 流程**（消歧 → 判断 → 写 prompt → 执行），不做预先的全盘分析
+- **每个任务走一次完整的 code-task 流程**（准备检查 → 消歧 → 判断 → 写 prompt → 执行），不做预先的全盘分析
 - **不要一次写多个任务的 prompt 然后批量发**——这等于你在替用户做优先级编排，违背纯路由原则
 - **等待 review 信号**——用户说"下一个"、确认 OK、或者主动推进，才算可以继续。用户没说话就是还在审
 - 如果任务是互不依赖的，等所有任务都 review 完后，再根据反馈一次性修正

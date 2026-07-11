@@ -1,7 +1,7 @@
 ---
 name: code-project
 description: "代码项目管理：Git 工作流规范、提交规范、PII 隐私红线、本地开发产物管理。Emma 在处理 git 操作时使用的 skill。"
-version: 1.1.0
+version: 1.2.0
 author: Emma
 platforms: [linux]
 metadata:
@@ -22,6 +22,7 @@ metadata:
 | **准备提交时** | "commit"、"提交"、"暂存" |
 | **处理 .gitignore** | "加 gitignore"、"忽略文件"、"开发产物" |
 | **用户问 git 规范** | "分支怎么命名"、"commit 格式"、"提交规范" |
+| **技术债审计** | "技术债还有哪些"、"项目健康度"、"代码质量怎么样" |
 
 ---
 
@@ -281,6 +282,82 @@ tmp/
 ```
 
 **判断标准：** 如果一个目录的内容是工具运行产生的缓存/索引（可重建）、不是项目源代码/配置、不会影响其他人运行项目、只在你机器上有意义 → 就加 `.gitignore`。
+
+### 确认文件是否真的需要加 .gitignore
+
+当你说"X文件需要加 .gitignore"时，**先验证再行动**——模式可能已经覆盖了它：
+
+```bash
+# ✅ 用 git ls-files 确认文件是否被跟踪
+git ls-files <可疑文件>
+
+# 输出为空 → 未被跟踪（已在 .gitignore 覆盖范围内或不在仓库中）
+# 有输出   → 已被跟踪，需要 git rm --cached 再追加忽略
+```
+
+不要默认假设一个文件需要追加 gitignore 规则——`*.db`、`*.log` 等通配模式可能已经覆盖了。
+
+> **教训（2026-07-12 Mneme）：** memories.db（2MB）被列为技术债条目，以为需要加 .gitignore。实际 `git ls-files` 确认它未被跟踪，`*.db` 模式已覆盖。先验证再行动。
+
+---
+
+## 🔍 技术债审计工作流
+
+当用户问"技术债还有哪些"、"项目健康度怎么样"时，按以下流程执行全量扫描：
+
+### 标准扫描清单
+
+```bash
+# 1. 读现有技术债文档
+cat TECH_DEBT.md 2>/dev/null || echo "无 TECH_DEBT.md"
+
+# 2. Ruff 全面检查
+ruff check src/                     # 源码区
+ruff check tests/                   # 测试区（很多人只扫 src/，漏掉 tests/）
+
+# 3. 扫描 TODO/FIXME/HACK/XXX 残留
+grep -rn "TODO\|FIXME\|HACK\|XXX\|WORKAROUND" --include="*.py" src/ tests/ \
+  || echo "✅ 无残留"
+
+# 4. Git 状态快照
+git diff --stat                     # 未提交的改动
+git ls-files --others --exclude-standard  # untracked 文件
+
+# 5. 遗留测试产物
+ls *.db *.db-journal *.db-wal *.db-shm 2>/dev/null \
+  && echo "⚠️ DB 产物在项目根" || echo "✅ 无 DB 产物"
+
+# 6. 关键测试冒烟（最快的那组）
+python -m pytest tests/test_types.py tests/test_db.py -v --tb=short --timeout=30
+```
+
+### 结果汇报
+
+按 🔴 🟡 🟢 三级输出，明确每条的状态、位置和改量：
+
+```markdown
+| 优先级 | 项目 | 改量 | 说明 |
+|:------:|:----|:----|:-----|
+| 🔴 | **阻塞问题** | N 文件 | 需要立即处理 |
+| 🟡 | **高优先级** | N 文件 | 应该修的 |
+| 🟢 | **低优先级** | N 文件 | 顺手可修 |
+```
+
+交叉对照 TECH_DEBT.md 的记录：
+- 已有条目是否已解决 → 标记为 ✅
+- 未记录的条目 → 新增到报告中
+- 计数不一致（如过时的 test count）→ 指出差异
+
+### 常见遗漏
+
+| 容易漏掉的内容 | 检查方式 |
+|:--------------|:---------|
+| 测试文件的 ruff 问题 | `ruff check tests/` — 很多人只扫 src/ |
+| 已解决但 TECH_DEBT 没更新的条目 | 对比 ruff/测试结果和 TECH_DEBT 记录 |
+| 被 git 忽略但仍需清理的产物 | `git ls-files --others --exclude-standard` |
+| 依赖装了但没用 | `pip list` + 对照 pyproject.toml 的 dependencies |
+
+> **本 session（2026-07-12 Mneme）验证：** 全量扫描发现 ruff src/ 零报错、tests/ 有 15 处（全在 integration_test_v03.py，含 E501 + B007）、TECH_DEBT 记录的 135 测试已过时（实际 166 pass）。扫描完直接修复了 3 项。
 
 ---
 
