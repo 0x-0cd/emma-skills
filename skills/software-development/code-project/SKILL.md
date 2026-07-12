@@ -301,6 +301,63 @@ git ls-files <可疑文件>
 
 ---
 
+## 🪪 项目改名工作流
+
+当用户发现项目目录名和实际项目名不一致需要改名时，按以下步骤安全执行：
+
+### 标准流程
+
+```bash
+# 0. 先确认 GitHub 远程仓库名是否正确
+git remote -v
+# 如果远程仓库名需要改，去 GitHub 上 rename repo 再 git remote set-url
+
+# 1. 全量搜索所有硬编码的旧路径
+#    搜所有常见文件类型，不限于项目内部
+grep -rn "旧路径" --include="*.py" --include="*.md" --include="*.toml" \
+     --include="*.yaml" --include="*.yml" --include="*.json" \
+     --include="*.jsonc" --include="*.sh" ~/
+
+# 2. 分类路径引用
+#    按"项目内部"和"外部依赖（skills/benchmarks/scripts）"分类
+
+# 3. 改名目录
+mv ~/projects/旧目录 ~/projects/新目录
+
+# 4. 重装可编辑安装（旧 pip install -e 指向旧路径）
+pip install -e . --no-deps
+
+# 5. 更新第1步找到的所有引用
+#    - 项目内部文件：直接 edit
+#    - 外部依赖：逐一 patch
+
+# 6. 验证
+python -c "from 包名 import __version__; print('OK')"
+python -m pytest 最快测试组 -q
+```
+
+### 分类策略
+
+| 引用类型 | 处理方式 | 例子 |
+|:---------|:---------|:-----|
+| **项目内部文件** | `patch` 直改 | start_server.py 的 cwd、test 中的硬编码路径 |
+| **外部 benchmark 项目** | `patch` 直改 | memory-benchmarks/run_locomo_local.py 的 MNEME_PROJECT_DIR |
+| **Hermes skills 文档** | `patch` 直改 | skills 目录下的引用文档和模板 |
+| **Hermes cron 任务** | `cronjob list` 检查后 update | cron 脚本中的 cwd 参数 |
+
+### 常见陷阱
+
+| 陷阱 | 预防 |
+|:----|:-----|
+| **只改目录名不改引用** | 改名后立刻搜一遍旧路径确认零命中 |
+| **忘记重装 pip install -e** | 旧 editable install 指向已不存在的路径，import 会报 ModuleNotFoundError |
+| **漏掉 emma-skills 等外部技能库** | 搜 `~/` 全量，不限项目目录 |
+| **漏掉 cron 任务的 cwd 参数** | `hermes cron list` 查看所有任务的工作目录 |
+
+> **教训（2026-07-12 Mneme 改名）：** `ai-memory-system` → `mneme`，发现 9 处硬编码引用分布于项目内部、memory-benchmarks、emma-skills 三个独立位置。改名后还需要 `pip install -e . --no-deps` 重装才能使 import 生效。
+
+---
+
 ## 🔍 技术债审计工作流
 
 当用户问"技术债还有哪些"、"项目健康度怎么样"时，按以下流程执行全量扫描：

@@ -1,7 +1,7 @@
 ---
 name: hermes-maintenance
 description: "Maintain Hermes Agent system-level dependencies: upgrade bundled Node.js, fix TUI npm install failures, handle ARM64-specific quirks (Electron downloads), and post-update health verification."
-version: 1.5.0
+version: 1.6.0
 author: Emma
 license: MIT
 metadata:
@@ -815,6 +815,8 @@ du -sh <dirname>
 ---
 
 ## Pitfalls
+
+- **RTK (Rust Token Killer) intercepts terminal commands** — The `rtk` binary at `~/.local/bin/rtk` wraps command execution for token-efficient output rewriting. In foreground mode, commands run normally. In **background processes**, the command string shown in `process(action='log')` will appear rewritten (e.g., `python -m pytest` → `rtk pytest`). This can cause confusion when debugging failed background tasks — the output is stripped/summarized by RTK. Check `~/.local/share/rtk/tee/` for full logs of background process output. The Hermes plugin `rtk-rewrite` at `~/.hermes/plugins/rtk-rewrite/` handles the integration.
 
 - **`hermes sessions delete` supports `--yes`** — unlike earlier versions, the `delete` subcommand now accepts `--yes` to skip confirmation. No need for `echo "y" | ...` workaround.**`hermes --yolo` does NOT bypass this prompt.**
 - **`hermes sessions delete` accepts exactly ONE session ID per call.** Passing multiple IDs gives "unrecognized arguments" error. Use a loop or call it repeatedly.
