@@ -1,7 +1,7 @@
 ---
 name: hermes-provider-config
 description: "Configure Hermes Agent's LLM providers: primary model, credential pools (multi-key rotation), and fallback providers (cross-provider failover)."
-version: 1.4.0
+version: 1.5.0
 author: agent
 created_by: agent
 metadata:
@@ -449,6 +449,60 @@ makes synchronous HTTP requests during startup to:
 These fire regardless of your primary provider. See `references/init-time-blocking-calls.md`
 for full details, including diagnosis commands, combined impact table, and the
 "proxy helps some calls, hurts others" trap.
+
+### Provider Health Check: Quick Stability Test
+
+When a provider has been flaky (empty responses, 503 errors, intermittent timeouts),
+run a **rapid sequential ping test** to assess current health before investing time in
+a full workload:
+
+```bash
+export http_proxy=http://127.0.0.1:7890 https_proxy=http://127.0.0.1:7890
+for i in 1 2 3 4 5; do
+  echo "=== Request $i ==="
+  timeout 30 <tool-binary> run -m <model> "Just answer with the number $i. No other text." 2>&1
+  sleep 2
+done
+```
+
+**What to check in the output:**
+
+| Symptom | Diagnosis | Action |
+|---------|-----------|--------|
+| All 5 return correct, non-empty answers | ✅ Healthy | Proceed with workload |
+| Any request returns empty string | ⚠️ Intermittent empty responses | Add retry logic with exponential backoff |
+| Any HTTP 503 / 5xx | ❌ Service outage | Wait and re-test later, or switch providers |
+| \>1 request times out (\>30s) | ⚠️ High latency / congestion | Check proxy routing — may be routing through slow foreign node |
+
+**opencode-go specific note:** OpenCode Go's DeepSeek V4 Flash has a known
+intermittent issue where ~15-50% of requests return empty responses but no HTTP
+error. Retry logic (exponential backoff, 5 attempts) recovers most of these. Full
+503s indicate the provider's upstream is genuinely down. After a 503 outage clears,
+run this 5-request test to confirm stability — the API usually recovers within a few hours.
+
+**⚠️ Compounded timeout trap:** When the LLMClient appears slow (~260s per
+request), the root cause may be the **openai library's internal retries** compounding
+with the LLMClient's own retries. The `_init_openai()` method doesn't set
+`max_retries=0`, so the library defaults to 2 HTTP retries. Each retry waits
+the full timeout duration. A 120s timeout × 3 HTTP attempts = 360s per
+LLMClient attempt before it even detects failure. **Fix:** set
+`"max_retries": 0` in the OpenAI client kwargs (the LLMClient already has
+its own retry logic).
+
+**Diagnostic signal:** look for `INFO | Retrying request to /chat/completions
+in 0.45s` in the logs — that's the openai library's httpx client doing an
+internal retry. If you see it repeatedly before `WARNING | Generation attempt
+N/5 timed out`, the `max_retries=0` fix is needed.
+
+**Benchmark-specific retry script:** For LoCoMo (or similar batch benchmark) results
+with empty answers, use `~/projects/memory-benchmarks/rerun_empty.py` to selectively
+retry only the empty questions from a saved results JSON file:
+```bash
+cd ~/projects/memory-benchmarks
+.venv/bin/python rerun_empty.py results/<file>.json
+```
+The script reads the file, finds entries with empty `generated_answer`, reruns them
+with unlimited retries, re-judges, and saves to `<file>_rerun.json`.
 
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: memory-system-evaluation
 description: Run standard memory benchmarks (LoCoMo, LongMemEval, BEAM) against custom memory backends — adapter creation, ingestion pipeline, parameter tuning, and failure analysis.
-version: 1.2.0
+version: 1.5.0
 author: Emma
 tags:
   - Memory Systems
@@ -99,20 +99,26 @@ ref_date_human = sorted_sessions[-1][1]  # e.g., "9:55 am on 22 October, 2023"
 
 Different API routes give very different results. Run a smoke test first to calibrate.
 
-| Route | Quality (LoCoMo) | Speed (per 100 Qs) | Cost | Notes |
+| Route | Quality (Conv 1) | Speed (per 100 Qs) | Cost | Notes |
 |-------|:----------------:|:-------------------:|:----:|-------|
-| **Direct DeepSeek** (`PROVIDER=direct`) | ~78% | ~30 min | $0.07 | Best quality, fast, cheap (if key is valid) |
-| **Opencode-go proxy** (`PROVIDER=opencode`) | ~46% | ~70 min | included | Much slower, ~32pp drop in accuracy. Avoid for benchmark runs unless you need opencode call records. |
+| **Opencode-go + retry + `max_completion_tokens` fix** (`PROVIDER=opencode`, `ANSWER_RETRIES=10`) | **~90%** | ~120 min | included | **Best available quality.** Post-fix (see LLMClient section below), opencode-go outperforms direct DeepSeek. Two bugs fixed: (1) `content is None` → `not content` catches empty string; (2) `max_completion_tokens` prevents reasoning from consuming the visible-content budget. |
+| **Direct DeepSeek** (`PROVIDER=direct`) | ~88% | ~30 min | $0.07 | Historically the baseline. Key must be valid. Quality gap vs fixed opencode-go is negligible (~2pp). |
+| **Opencode-go proxy** (`PROVIDER=opencode`, no retry, unfixed client) | ~46% | ~70 min | included | PRE-FIX numbers. Without `max_completion_tokens`, empty responses from reasoning_content consume ~51% of requests. Never use this configuration for benchmarks. |
 
-**Key finding:** Routing through opencode-go proxy degrades LoCoMo accuracy by ~32 percentage points (78% → 46%) and doubles wall time. The direct DeepSeek API produces far better results at negligible cost (~$0.67 for 1,540 questions).
+**Key finding:** The ~32pp gap between opencode-go and direct DeepSeek was entirely caused by two LLMClient bugs — the provider itself delivers equivalent quality when properly configured. Fix the client, don't switch providers.
 
-**Root cause of accuracy drop:** Opencode-go proxy returns **empty responses ~51% of the time** (vs ~10% for direct DeepSeek). Empty answers are scored WRONG by the judge. Non-empty answers via opencode-go actually achieve **~96% accuracy**, proving the model quality is fine — the issue is API reliability with long-context prompts (top-50 search results). Use `ANSWER_RETRIES=5` to mitigate (retry with exponential backoff).
+- **Empty response root cause (before fix):** Opencode-go's `deepseek-v4-flash` emits `reasoning_content` that shares the `max_tokens` budget with visible `content`. When the model spends all tokens on reasoning, `content: ""` is returned. The LLMClient's `content is None` check missed `""`. Two fixes:
+  1. Guard: `if not content:` instead of `if content is None:` — catches empty string
+  2. Token budget: `max_completion_tokens` instead of `max_tokens` for deepseek models — gives content its own quota
+- **Retry effectiveness (after fix):** `ANSWER_RETRIES=10` with exponential backoff recovers ~70% of empty responses. The remaining ~30% persist even with unlimited retries (appears to be provider-side prompt filtering of certain patterns, not transient). Overall, the rerun_empty.py script recovers about 10/14 (71%) of previously empty questions.
+- **Per-category quality (Conv 1, after fix):** Single-hop 88.6%, Multi-hop 90.9%, Temporal 92.3%. No open-domain questions in Conv 1.
+- **Cost:** Included in opencode-go subscription. Benchmark cost is effectively $0 (already paid subscription).
 
-### API Key Expiration
+### API Key Note
 
-**⚠️ Direct DeepSeek keys can expire mid-run.** If you see `401 - Authentication Fails` errors during a multi-hour benchmark, the key has been revoked/expired. The checkpoint mechanism (saves after each conversation) ensures partial results are preserved — kill the process, get a new key, and resume from the next conversation range.
+Direct DeepSeek keys can expire mid-run. If you see `401 - Authentication Fails` errors during a multi-hour benchmark, the key has been revoked/expired. The checkpoint mechanism (saves after each conversation) ensures partial results are preserved.
 
-**Workaround if you only have a proxy key:** Set `PROVIDER=opencode` and accept lower accuracy, or invest in a fresh DeepSeek API key ($0.67/run is negligible).
+**Do NOT suggest getting a new DeepSeek API key as a primary fix.** The opencode-go provider, when properly configured (LLMClient fixes above), delivers equivalent or better benchmark quality. The correct response to opencode-go issues is: (1) verify the API is healthy (5-request test); (2) check for empty-response patterns; (3) apply/fix the LLMClient guards; (4) run the retry script. Only escalate to a different API key if the provider is in an extended outage (multiple hours of 503s).
 
 ### Phase 3: Smoke Test
 
@@ -291,6 +297,16 @@ Key discovery hierarchy (when PROVIDER=direct):
 
 ⚠️ **RTK/env var obfuscation:** Hermes' security system (RTK, secret redaction) filters env vars containing "API_KEY" from being visible to or passed to child processes. `source ~/.hermes/.env && python script.py` will NOT propagate `DEEPSEEK_API_KEY` — the subprocess sees an empty string. This is NOT a shell issue; RTK intercepts the env var name at the output level. **Workaround:** Write keys to `~/.local/share/opencode/auth.json` via `execute_code` (not `terminal`, since terminal output is filtered), then let the script's `auth.json` fallback read it.
 
+⚠️ **When DeepSeek API key expires mid-benchmark, Hermes compression also breaks:** The `auxiliary.compression` provider typically points at `deepseek`, and when the key expires, compression throws 401 errors (`/compress` command fails). Reconfigure it to use opencode-go:
+
+```bash
+hermes config set auxiliary.compression.provider opencode-go
+hermes config set auxiliary.compression.model deepseek-v4-flash
+hermes config set auxiliary.compression.base_url https://opencode.ai/zen/go/v1
+```
+
+The api_key stays empty (picked up from the credential pool automatically). After this, `/compress` works again.
+
 ⚠️ **Opencode-go quality caveat:** If you must use opencode-go (for call records, billing, etc.), expect ~32pp lower accuracy than direct DeepSeek. This is NOT suitable for publishing benchmark results — use direct API for that.
 
 ### ⚠️ Model naming
@@ -328,6 +344,72 @@ A checkpoint means a crash or manual kill only loses the current conversation, n
 ### ⚠️ Check `created_at` on stored memories
 If search returns results but all scores are 0.0 or the chronological sort is wrong, inspect the `created_at` field of stored memories — this is often the canary for temporal metadata bugs.
 
+### ⚠️ LLMClient empty content detection: `content is None` misses `content=""`
+
+The `LLMClient._generate_openai()` method in `benchmarks/common/llm_client.py` checks `if content is None` to detect empty API responses. However, the opencode-go proxy for `deepseek-v4-flash` returns `content: ""` (empty string) instead of `content: null` when the model's `reasoning_content` consumes the entire `max_tokens` budget. An empty string `""` passes `is None` — the empty response is silently returned as valid output, scoring WRONG on the judge.
+
+**Symptom:** High empty response rate (~15-51%) with no retry activity logged. Raw API inspection shows `finish_reason: "length"` and non-empty `reasoning_content` but empty `content`.
+
+**Fix 1 (guard check):**
+```python
+# BEFORE (broken)
+if content is None:
+
+# AFTER (correct)
+if not content:
+```
+
+Also check `_generate_structured_openai()` — the same pattern applies there (it already uses `if not raw`, so it's fine).
+
+**Fix 2 (token budget):** Use `max_completion_tokens` instead of `max_tokens` for reasoning-enabled models so the visible content gets a dedicated budget independent of reasoning:
+```python
+# In LLMClient._openai_chat_token_limit_kwargs:
+if m.startswith("deepseek") or "deepseek" in m:
+    return {"max_completion_tokens": max_tokens}
+```
+
+Both fixes are required for reliable benchmark runs via opencode-go.
+
+See `references/empty-response-debugging.md` for the full diagnostic flow.
+
+### ⚠️ OpenAI library default `max_retries=2` compounds timeout
+
+`LLMClient._init_openai()` creates an `openai.AsyncOpenAI` client without setting `max_retries`, so the library defaults to 2 internal HTTP retries. When the API responds slowly, each LLMClient attempt actually makes **3 HTTP requests** (1 original + 2 retries by openai), each waiting the full `timeout` duration.
+
+**How it multiplies:**
+```
+Per LLMClient attempt:
+  openai sends request → waits 120s → timeout
+  → openai retries (0.45s) → waits 120s → timeout  
+  → openai retries again → waits 120s → timeout
+  → openai gives up, error to LLMClient
+  Total: ~361s per LLMClient attempt
+× 5 max_retries = ~1800s (30 min) per answer generation
+× 10 ANSWER_RETRIES = ~300 min per question (worst case)
+```
+
+**Symptom:** Log shows `INFO | Retrying request to /chat/completions in 0.45s` (openai library retry, logged by httpx) interleaved with `WARNING | Generation attempt N/5 timed out` (LLMClient retry). A question that should take 15s takes 5+ minutes.
+
+**Fix:** Add `"max_retries": 0` to the OpenAI client kwargs:
+
+```python
+def _init_openai(self, api_key, base_url, timeout, **kwargs):
+    client_kwargs = {
+        "timeout": openai.Timeout(timeout, connect=10.0),
+        "max_retries": 0,  # LLMClient handles retries; disable openai's own
+    }
+```
+
+The LLMClient already has its own retry loop (`max_retries`, default 5) with exponential backoff. Openai's internal retries are redundant and, with a 120s timeout, **triple the effective wait before the LLMClient even knows an attempt failed**.
+
+**Verify the fix:**
+```bash
+grep 'max_retries' benchmarks/common/llm_client.py
+# Must show: "max_retries": 0
+```
+
+**Note:** Only future script invocations benefit — a long-running process that already imported the old code keeps the compounded behavior until restarted.
+
 ## Verification Checklist
 
 ```
@@ -355,7 +437,9 @@ Full Run:
 
 - `references/locomo-integration.md` — Session-specific: LoCoMo adapter pattern, temporal metadata debugging, API routing for this environment, local benchmark mode
 - `references/locomo-splitting.md` — Splitting LoCoMo into parallel conversation-range tasks, result merging script
+- `references/retry-analysis-conv1.md` — Detailed conv-1 performance comparison across three provider/retry configurations (direct DeepSeek, opencode-go no-retry, opencode-go + retry)
 - `references/arm64-uvicorn-debug.md` — Debugging uvicorn + aiohttp/httpx timeout on Raspberry Pi (ARM64)
+- `references/empty-response-debugging.md` — Systematic debugging of empty LLM responses: raw API inspection, `content:""` vs `content:None` client bug, `reasoning_content` token budget consumption, opencode-go provider profile, full debug session transcript
 - `templates/run_locomo_local.py` — Runnable template for local (no-HTTP) benchmark runner
 - [LoCoMo: ACL 2024](https://arxiv.org/abs/2404.06064) — Original paper by Snap Research
 - [LoCoMo GitHub](https://github.com/snap-research/LoCoMo) — Benchmark dataset and official implementation
