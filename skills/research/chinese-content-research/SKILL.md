@@ -1,7 +1,7 @@
 ---
 name: chinese-content-research
 description: "Research Chinese internet content — trending topics, tech news, social media posts, platform-specific data. Use web_extract on Chinese aggregator sites as primary method; web_search (DuckDuckGo/Brave) is unreliable for Chinese queries."
-version: 1.1.0
+version: 1.2.0
 author: Emma
 tags: [chinese, research, web_extract, social-media, scraping, aggregators]
 ---
@@ -85,11 +85,43 @@ All support: keyword search, post crawling, comments, creator homepage, IP proxy
 - Dependencies are standard libraries (httpx, playwright, fastapi, pandas, etc.)
 - `pyexecjs` is the highest-risk dep — it executes JS locally for platform signature handling. Audit this if supply-chain security is a concern.
 - Disclaimer: for learning/research only; commercial use may violate platform ToS.
+## Game Research: Terminology & Fact-Checking
+
+When researching Chinese-localized games (幻兽帕鲁, 原神, etc.), follow these rules strictly:
+
+### Rule 1: Never translate English game terms to Chinese yourself
+Official Chinese game names are localized, not literal translations. For example:
+- ❌ "Nitewing" → "迅猛鸟" (machine-translated)
+- ✅ "Nitewing" → **疾风隼** (official Chinese name)
+- ❌ "Eikthyrdeer" → "骑士鹿"
+- ✅ "Eikthyrdeer" → **紫霞鹿**
+
+Always verify Chinese names against authoritative game databases:
+| Game | Authoritative Chinese DB | URL Pattern |
+|------|------------------------|-------------|
+| 幻兽帕鲁 | paldb.cc/cn | `https://paldb.cc/cn/<PalName>` |
+| 幻兽帕鲁 | B站 Wiki | `https://wiki.biligame.com/palworld/<中文名>` |
+| 幻兽帕鲁 | 萌娘百科 | `https://mzh.moegirl.org.cn/<中文名>` |
+| 一般游戏 | 配种/图鉴计算器 | `palworldbreedingcalc.com/zh-CN/` |
+
+### Rule 2: AI-generated gaming articles are rampant
+Chinese gaming content sites (233乐园, 18183, 17173, etc.) are flooded with AI-generated articles that fabricate game mechanics and item names (e.g. "帕鲁茧" — an item that doesn't exist in 幻兽帕鲁). Cross-reference every specific claim (item names, mechanics, stats) against the authoritative DB above before presenting to the user.
+
+### Rule 3: Build terminology tables proactively
+When researching a Chinese-localized game for the first time in a session, build a Chinese↔English term mapping table from authoritative sources BEFORE diving into guides. Present it to the user for validation. This prevents downstream miscommunication.
 
 ## Pitfalls
 
-- **web_search timeout loop**: `web_search` frequently times out on Chinese queries (DuckDuckGo/Brave backends struggle through VPN). After the **first** timeout on a Chinese query, immediately switch to `web_extract` on a known aggregator or official site. Do NOT retry 3+ times — you'll waste turns. If you must search, use short English queries (e.g. `"deepseek" "v4.1"`) rather than Chinese ones.\n- **web_search on English queries still works**: For Chinese-tech topics, search in English can sometimes succeed where Chinese queries fail. Use English query terms + "Chinese" / site filters as a fallback.
-- **Fact-checking Chinese tech rumors**: Chinese tech aggregators (快科技, IT之家, 36氪) frequently repost forum/community posts as "news" with minimal verification. Trace every claim to its original source (Linux.do, Zhihu, etc.) before trusting it. The publication chain is usually: `forum post → tech blog → mainstream media repost`, each step adding credibility without adding verification.
+### Web search & scraping
+- **web_search timeout loop**: `web_search` frequently times out on Chinese queries (DuckDuckGo/Brave backends struggle through VPN). After the **first** timeout on a Chinese query, immediately switch to `web_extract` on a known aggregator or official site. Do NOT retry 3+ times — you'll waste turns. If you must search, use short English queries (e.g. `"deepseek" "v4.1"`) rather than Chinese ones.
+- **web_search on English queries still works**: For Chinese-tech topics, search in English can sometimes succeed where Chinese queries fail. Use English query terms + "Chinese" / site filters as a fallback.
 - **GitHub clone through VPN**: HTTPS clone and archive downloads may fail while API (api.github.com) works. Use the API + raw.githubusercontent.com pattern.
 - **Xiaohongshu posting is a dead end**: No public API. Don't attempt browser-automation posting — fragile and against ToS. Reading is fine.
-- **tophub.today URLs**: The numeric ID in URLs (e.g., `/n/KqndgxeLl9`) is a stable identifier per topic list. Save the ones you need.
+- **tophub.today URLs**: The numeric ID in URLs (e.g. `/n/KqndgxeLl9`) is a stable identifier per topic list. Save the ones you need.
+
+### Fact-checking & verification
+- **Fact-checking Chinese tech rumors**: Chinese tech aggregators (快科技, IT之家, 36氪) frequently repost forum/community posts as "news" with minimal verification. Trace every claim to its original source (Linux.do, Zhihu, etc.) before trusting it. The publication chain is usually: `forum post → tech blog → mainstream media repost`, each step adding credibility without adding verification.
+- **AI-generated game articles are epidemic**: Sites like 233乐园, 18183, 17173 are flooded with AI-generated guides that fabricate game mechanics, item names, and stats. A fabricated item called "帕鲁茧" (doesn't exist in 幻兽帕鲁) was presented as fact in multiple articles. ALWAYS cross-reference specific claims (item names, boss mechanics, drop tables) against the authoritative DB (paldb.cc/cn) before telling the user. If you can't verify it, say "I'm not sure" — never present unverified game data as fact.
+- **Never translate English game terms to Chinese yourself**: Official Chinese game names are localized, not literal translations. Machine-translating "Nitewing" to "迅猛鸟" or "Eikthyrdeer" to "骑士鹿" will produce wrong names that don't exist in-game. The user WILL notice and correct you. Always look up the official Chinese name from the authoritative DB first. See the Game Research section above for source URLs.
+- **Build terminology tables proactively**: When researching a Chinese-localized game for the first time in a session, build a Chinese↔English term mapping table from authoritative sources BEFORE diving into guides. Present it to the user for validation. This prevents downstream miscommunication and shows you did the groundwork.
+- **Distinguish similar game locations**: Games often have multiple locations with similar names (e.g. 油田要塞 vs 石油钻井平台 in 幻兽帕鲁 — one has a helicopter boss, the other doesn't). When the user describes confusion about game content, check whether they might be conflating different locations/mechanics before assuming their understanding is wrong.
