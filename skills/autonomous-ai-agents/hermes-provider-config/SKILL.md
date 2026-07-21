@@ -625,6 +625,7 @@ Model/provider/fallback changes are read at session startup. In CLI: exit and re
 - references/opencode-go-subscription.md — OpenCode Go pricing, usage limits, per-model quotas, and how (not) to check remaining usage
 - references/init-time-blocking-calls.md — synchronous network calls Hermes makes during startup that block in restrictive networks
 - references/mimo-direct-api.md — calling Xiaomi MiMo API directly from terminal/execute_code when vision toolset isn't loaded
+- references/mimo-web-search-plugin.md — MiMo web search plugin: server-side search API, format, pricing, pitfalls
 - skill_view(name="hermes-agent") — full CLI reference, provider list, credential pool docs
 - https://hermes-agent.nousresearch.com/docs/user-guide/features/fallback-providers
 - https://hermes-agent.nousresearch.com/docs/user-guide/features/credential-pools

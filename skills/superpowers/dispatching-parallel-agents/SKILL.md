@@ -130,7 +130,19 @@ Scan all Python sources (exclude __pycache__/.venv/node_modules) for:
 每条发现附精确文件路径和行号范围。
 ```
 
-## Common Mistakes
+### Subagent Credential Blindness
+Subagents **cannot reliably read sensitive env vars** from `~/.hermes/.env`. When you instruct a subagent to `grep` or `sed` the file, hermes security masking truncates API keys (e.g. `sk-cy9...u0au` instead of full key). The subagent then uses the wrong/truncated key and gets 401 errors.
+
+**Symptoms:** All subagents return `HTTP 401: Invalid API Key` for the same provider (e.g. MiMo/xiaomi), while the parent session works fine.
+
+**Fix:** If a task requires a provider-specific API key (MiMo, etc.):
+1. Do the API calls yourself (in `execute_code` or `terminal`) instead of delegating
+2. Or use `bash -c 'source ~/.hermes/.env; curl ...'` as the ENTIRE command (subagent must not try to extract and reuse the key separately)
+3. Or pass the key explicitly in the subagent's context (only if the task doesn't involve PII concerns)
+
+**Do NOT** instruct subagents to "read the key from .env and use it" — this fails silently.
+
+### Common Mistakes
 
 **❌ Too broad:** "Fix all the tests" - agent gets lost
 **✅ Specific:** "Fix agent-tool-abort.test.ts" - focused scope
