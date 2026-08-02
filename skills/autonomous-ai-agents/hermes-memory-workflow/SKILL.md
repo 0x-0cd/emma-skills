@@ -131,13 +131,17 @@ When the user asks for calibration, present your current understanding structure
 
 ### Procedure
 
+**CRITICAL: One-by-one is mandatory, not optional.** The user has explicitly rejected batch summaries ("这个记忆内容已经压缩得有点变形了…我们来整个重新过一遍。你一条一条问我"). Presenting a big summary first and asking for batch corrections leads to missed errors. Always go entry by entry from the start.
+
 ```markdown
 1. IDENTIFY — Scan current MEMORY.md, USER.md, fact_store, and relevant skills
 2. ORGANIZE — Structure findings into the 4-dimension format above
-3. PRESENT — Be thorough. List specific details so the user can spot errors.
-   - Use bullet points, not paragraphs
-   - Mark what you're confident about vs uncertain
-   - For each fact, state it as an assertion the user can confirm/deny
+3. PRESENT — Go through entries ONE AT A TIME, not all at once. For each entry:
+   - Show the content verbatim as an assertion the user can confirm/deny
+   - Ask "这条还准确吗？要改什么？"
+   - Wait for response before moving to the next entry
+   - Start with dimension 1 (对用户的认知) and work through all four
+   - All rule entries should be in Chinese (用户偏好中文)
 4. ABSORB — For each correction:
    a. Acknowledge it explicitly ("修正: 旧X → 新Y")
    b. Update memory: user identity facts → `memory:user replace`
@@ -156,6 +160,9 @@ When the user asks for calibration, present your current understanding structure
 - **Don't treat the four dimensions as fixed** — New dimensions may emerge. Note them and update this skill section.
 - **Don't skip verification** — Always grep/stale-search after corrections to catch hidden copies (log files are exempt).
 - **User corrections to factual details are memory updates, not skill updates** — Only workflow/approach corrections belong in skills. Factual corrections (how many years, which company, what date) go to memory/fact_store.
+- **memory tool `replace` requires non-empty `content`** — `memory(action='replace', old_text='...', content='')` FAILS with "content is required". To delete an entry, use `memory(action='remove', old_text='...')`. To modify, both `old_text` (to identify) and `content` (the replacement) are mandatory.
+- **Batch memory operations are all-or-nothing** — If ANY operation in the batch fails validation, NONE are applied. Validate every operation's parameters before submitting. Common mistakes: using `replace` where `remove` is needed, missing `old_text` on remove/replace.
+- **Layering check should cover all three tiers** — During calibration or reorganization, audit MEMORY.md, USER PROFILE, AND fact_store for overlap, bloat, and stale entries. Don't stop at MEMORY.md — USER PROFILE often has duplicate entries (same preference stated in both places), and fact_store accumulates untagged/stale entries that need cleanup.
 
 ---
 
@@ -301,16 +308,33 @@ Don't wait for the user to say "整理记忆". Initiate a maintenance pass when:
 
 ## Calibration Sessions (记忆校准)
 
-When the user sends only "记忆校准" as a message, initiate a full memory calibration session:
+When the user sends only "记忆校准" as a message, initiate a full memory calibration session.
 
-1. Present current understanding across four dimensions:
-   - **对哥哥的认知** — identity, background, preferences, communication style
-   - **对Emma的认知** — role, capabilities, constraints
-   - **约束遵循** — privacy redlines, safety rules, approval gates
-   - **工作流理解** — collaboration model, coding workflow, knowledge management
-2. The user corrects each dimension actively
-3. Apply all corrections to MEMORY.md, USER.md, fact_store, and skills as needed
-4. Save the trigger rule in MEMORY.md so future sessions know it exists
+### Step-by-Step Procedure
+
+1. **Load all sources** — Pull MEMORY.md, user profile, and fact_store (list all) in parallel
+2. **Go through ONE ENTRY AT A TIME** — Do NOT present a big summary and ask for batch corrections. The user explicitly prefers one-by-one review to catch errors that batch review misses.
+3. **For each entry:**
+   a. Show the entry content verbatim
+   b. Ask: "这条还准确吗？要改什么？"
+   c. Wait for user response before proceeding to the next entry
+4. **Apply corrections as they come in** — Don't accumulate and apply at the end
+5. **After all entries reviewed**, present a diff summary showing what changed
+
+### Four Dimensions (organizational structure for the review)
+
+| # | Dimension | What It Covers | Where It Lives |
+|---|-----------|----------------|----------------|
+| 1 | **对哥哥的认知** | Identity, background, preferences, communication style | `memory:user` + `fact_store search('background|patent|preference')` |
+| 2 | **对Emma的认知** | My role, capabilities, constraints | `memory:user` (inline) + `fact_store search('email|权限')` |
+| 3 | **约束遵循** | Privacy redlines, safety rules, testing iron laws, approval gates | `memory:memory` (core inline) + `memory:user` |
+| 4 | **工作流理解** | Project workflow, coding pipeline, quality gates, memory management | `memory:memory` (meta-index) + `fact_store search('conventions')` |
+
+### Pitfalls Specific to Calibration
+
+- **Fabricated/hallucinated fact_store entries** — The LLM may have invented facts that were never confirmed by the user (e.g., a "to_emma" GitHub repo that never existed but persisted as fact #12). During calibration, treat every factual claim as suspect until the user confirms it. If the user says "没有这回事", remove it immediately — don't argue or rationalize.
+- **Compression corruption in fact_store** — Over many compression cycles, names and details can degrade (e.g., "哥哥" → "钱哥", paths get mangled). During calibration, flag any entry where names look wrong or garbled — ask the user to confirm.
+- **Don't present everything at once** — Presenting the full four-dimension summary overwhelms the user and leads to missed corrections. Go one entry at a time, starting with dimension 1.
 
 **Suggested cadence:** Quarterly (every 3 months), or event-driven (job change, frequent corrections, contradict() triggers).
 
@@ -730,4 +754,6 @@ hermes config set memory.memory_char_limit <N>  # nested under memory: section
 - **Self-referential memory management rule** — The meta-memory management workflow itself MUST be recorded in MEMORY.md (元记忆规则). Without it, future sessions will re-inflate MEMORY.md with concrete facts because there's no rule telling them not to. This prevents the same problem from recurring.
 - **Pointer format must be unambiguous** — A 元记忆 entry like `🔧 工具链 → fact_store` is useless without a query. Always include the exact retrieval call: `🔧 工具链 → fact_store search('tool|config|provider')`. The agent needs an actionable command, not a hint.
 - **Pointer without destination = dead link** — The most common meta-memory failure: writing `📚 书单 → fact_store search('reading')` in MEMORY.md without ever storing the book list in fact_store. The pointer loads into every session but always returns empty. The data is only recoverable from LCM session backups (if still available). **Prevention:** Never create a pointer without first verifying the target data exists via a retrieval call. See Phase 2, step 3 above.
-- **`skill_manage(action='patch')` with `replace_all=True` is dangerous** — Use with extreme care. The pattern `**Goal:** ... \n\n\`\`\`\n\`\`\`` appears 10+ times in YAML frontmatter and code block patterns, not just the intended target. Prefer `patch` without `replace_all` and add enough surrounding context for uniqueness, or use `edit` for full-file rewrites.
+- **`skill_manage(action='patch')` with `replace_all=True` is dangerous** — Use with extreme care. The pattern `**Goal:** ... \\n\\n\\`\\`\\`\\n\\`\\`\\`` appears 10+ times in YAML frontmatter and code block patterns, not just the intended target. Prefer `patch` without `replace_all` and add enough surrounding context for uniqueness, or use `edit` for full-file rewrites.
+- **Fact_store entries can be fabricated/hallucinated** — The LLM may generate plausible-sounding facts (repo names, tool paths, user preferences) that were never real. These persist across sessions because fact_store has no external validation. During calibration, every factual claim is suspect until the user explicitly confirms it. If denied, remove immediately — no rationalization.
+- **Compression corruption degrades names and details** — After many add/remove cycles, HRR entity extraction and content compression can corrupt names (e.g., "哥哥" → "钱哥"), mangle file paths, or merge unrelated facts. Watch for garbled names, implausible details, or entries that "feel wrong" — flag them for user confirmation during calibration.
