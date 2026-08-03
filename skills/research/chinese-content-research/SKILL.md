@@ -15,13 +15,27 @@ When researching Chinese internet content, there are three methods ranked by eff
 ### Method 1 (BEST): MiMo API Web Search
 When user says "用小米搜" or when high-volume/parallel Chinese search is needed:
 ```bash
-# MUST source .env — grep/sed on ~/.hermes/.env returns TRUNCATED keys (hermes security masking)
-# grep '^XIAOMI_API_KEY=' ~/.hermes/.env → "sk-cy9...u0au" (broken!)
-source ~/.hermes/.env 2>/dev/null
-curl -s -X POST https://api.xiaomimimo.com/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "api-key: $XIAOMI_API_KEY" \
-  -d '{"model":"mimo-v2.5","messages":[{"role":"user","content":"搜索查询"}],"tools":[{"type":"web_search","max_keyword":5,"force_search":true,"limit":8}]}'
+# KEY LOCATION (2026-08-03 update): MiMo key now lives in ~/.hermes/auth.json under credential_pool.xiaomi[].access_token.
+# The old ~/.hermes/.env XIAOMI_API_KEY is GONE — sourcing .env and grepping XIAOMI_API_KEY returns nothing/401.
+# Reliable pattern: read key with python3 from auth.json (never print it), then call the API:
+python3 << 'EOF'
+import json, urllib.request
+auth = json.load(open('/home/qn/.hermes/auth.json'))
+key = next(c['access_token'] for c in auth['credential_pool'].get('xiaomi', []) if c.get('access_token'))
+body = json.dumps({
+    "model": "mimo-v2.5",
+    "messages": [{"role": "user", "content": "搜索查询"}],
+    "tools": [{"type": "web_search", "max_keyword": 5, "force_search": True, "limit": 8}]
+}).encode()
+req = urllib.request.Request("https://api.xiaomimimo.com/v1/chat/completions",
+    data=body, headers={"Content-Type": "application/json", "api-key": key})
+d = json.loads(urllib.request.urlopen(req, timeout=60).read())
+msg = d["choices"][0]["message"]
+print(msg.get("content", ""))
+for a in msg.get("annotations", [])[:8]:
+    print("*", a.get("title",""), "|", a.get("site_name",""), "|", a.get("publish_time",""))
+    print("  ", (a.get("summary") or "")[:200]); print("  URL:", a.get("url",""))
+EOF
 ```
 - Returns structured `annotations` array: `{title, site_name, publish_time, summary, url}`
 - Also returns curated `content` with numbered/organized news items
@@ -135,7 +149,7 @@ When researching a Chinese-localized game for the first time in a session, build
 ## Pitfalls
 
 ### Web search & scraping
-- **MiMo .env key masking**: `grep`/`sed`/`cat` on `~/.hermes/.env` returns truncated API keys (e.g. `sk-cy9...u0au` instead of full key). This is hermes security masking. The fix: always use `source ~/.hermes/.env` in a bash subshell. In `execute_code`, use `terminal("bash -c 'source ~/.hermes/.env; echo $XIAOMI_API_KEY'")` to get the real key. Writing a bash script that sources the env file and does curl in parallel is the most reliable pattern for MiMo searches.
+- **MiMo key location**: The xiaomi API key is in `~/.hermes/auth.json` → `credential_pool.xiaomi[].access_token` (as of 2026-08; the old `~/.hermes/.env` `XIAOMI_API_KEY` no longer exists — sourcing it yields nothing and API calls 401). Read the key with python3 from auth.json and never print it. Note hermes security masking also truncates keys shown via grep/sed on `.env` — always read credentials programmatically inside the script that uses them.
 - **web_search timeout loop**: `web_search` frequently times out on Chinese queries (DuckDuckGo/Brave backends struggle through VPN). After the **first** timeout on a Chinese query, immediately switch to `web_extract` on a known aggregator or official site. Do NOT retry 3+ times — you'll waste turns. If you must search, use short English queries (e.g. `"deepseek" "v4.1"`) rather than Chinese ones.
 - **web_search on English queries still works**: For Chinese-tech topics, search in English can sometimes succeed where Chinese queries fail. Use English query terms + "Chinese" / site filters as a fallback.
 - **GitHub clone through VPN**: HTTPS clone and archive downloads may fail while API (api.github.com) works. Use the API + raw.githubusercontent.com pattern.

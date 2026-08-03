@@ -54,11 +54,13 @@ process(action="kill", session_id="<id>")  # Ctrl+C doesn't work here
 | Task | Model | Example |
 |:-----|:------|:--------|
 | Simple | Flash | Single-file fix, code review |
-| Complex | Pro | Multi-file refactor, new feature |
+| Complex | Flash | Multi-file refactor, new feature |
+
+> 2026-08-03 起统一 Flash（V4-Flash-0731 正式版 Agent 能力大幅增强），Pro 弃用。
 
 ```bash
 opencode run 'fix typo' --model deepseek/deepseek-v4-flash
-opencode run 'implement MCP storage' --model deepseek/deepseek-v4-pro
+opencode run 'implement MCP storage' --model deepseek/deepseek-v4-flash
 ```
 
 ## Global CLAUDE.md

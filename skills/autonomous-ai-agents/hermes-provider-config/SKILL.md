@@ -191,6 +191,57 @@ hermes auth list                    # All pools
 hermes auth list <provider>         # Specific pool, shows exhaustion status
 ```
 
+## Removing Provider Keys (Full Cleanup)
+
+When a provider key is no longer needed, credentials and config references must both be cleaned up. They are independent steps — removing credentials alone leaves orphaned references in `config.yaml`.
+
+### Step 1: Remove credentials from the pool
+
+```bash
+hermes auth remove <provider> 1     # Removes credential #1
+hermes auth remove <provider> <label>  # Or by exact label
+```
+
+This also clears any associated env vars (e.g. `OPENCODE_GO_API_KEY`) from `.env` and suppresses re-seeding.
+
+### Step 2: Clean up config.yaml references
+
+**Config.yaml is security-sensitive — the agent CANNOT edit it directly.** The `patch`/`write_file`/`terminal` tools will be blocked by Hermes security with an error like `"Refusing to write to Hermes config file"`.
+
+**Use `hermes config set` for individual fields:**
+
+```bash
+hermes config set fallback_providers ''           # Clear fallback (if scalar)
+hermes config set auxiliary.compression.provider xiaomi
+hermes config set auxiliary.compression.model mimo-v2.5
+hermes config set delegation.provider xiaomi
+hermes config set delegation.model xiaomi/mimo-v2.5
+```
+
+**For complex nested structures (lists, maps) that `hermes config set` can't handle:**
+
+1. Show the user the exact lines to edit (line numbers + content)
+2. User edits `~/.hermes/config.yaml` manually
+3. Verify with `hermes config` or `cat ~/.hermes/config.yaml`
+
+**⚠️ Pitfall:** `hermes config set` serializes complex values (lists, dicts) as YAML string literals, silently breaking the config. Only use it for scalar values. For `fallback_providers` (a list), use manual YAML editing or `hermes fallback` interactive CLI.
+
+### Common cleanup targets when removing a provider
+
+| Config section | What to look for | Replacement |
+|----------------|-----------------|-------------|
+| `fallback_providers` | `provider: <removed>` | Delete entire entry or swap to another provider |
+| `auxiliary.*` | `provider: <removed>` in any subtask | Change to available provider or set `provider: auto` |
+| `delegation` | `provider: <removed>`, `model: <removed>/<model>` | Set to main provider or another available one |
+
+### Verify after cleanup
+
+```bash
+hermes auth list                    # Confirm credential removed
+hermes config | grep -E 'provider|model'  # Confirm no orphaned references
+hermes doctor                       # Full health check
+```
+
 ## Layer 3: Fallback Providers (Cross-Provider Failover)
 
 When all credential pool keys for the primary provider are exhausted, Hermes automatically chains to a different provider+model pair **without losing the conversation**.
@@ -362,6 +413,40 @@ hermes config set auxiliary.vision.model mimo-v2.5
 If your main provider supports vision (like Xiaomi/MiMo, Google Gemini, Anthropic), `auxiliary.vision.provider: auto` will use it automatically — **no separate OpenRouter/Google key needed for vision**. The main provider's credentials are reused.
 
 Image generation (`image_gen` toolset) is the exception: it always uses FAL.ai and requires a `FAL_KEY`, regardless of main provider.
+
+### ⚠️ Auxiliary LLM ≠ Search/Extract Service
+
+A common confusion: `auxiliary.web_extract.provider` configures **which LLM processes extracted web content** (summarization, extraction), NOT the actual search/extract service.
+
+The actual search/extract services are configured separately:
+
+```yaml
+web.backend: tavily          # Base backend
+web.search_backend: exa      # Search queries → exa API
+web.extract_backend: tavily  # URL content extraction → tavily API
+```
+
+While `auxiliary.web_extract`:
+```yaml
+auxiliary.web_extract:
+  provider: xiaomi    # Which LLM processes the fetched content
+  model: ''           # Uses provider's default
+```
+
+**User says "搜索用 XiaoMi"** → They likely mean the LLM that processes search results, NOT changing the search backend from exa/tavily to Xiaomi. Always clarify before changing `auxiliary.web_extract.provider`.
+
+### `hermes auth list` Output Markers
+
+The `←` marker in `hermes auth list` output indicates the **currently active credential** in the pool:
+
+```
+xiaomi (3 credentials):
+  #1  XiaoMi               api_key manual ←    ← currently active
+  #2  XiaoMi2              api_key manual
+  #3  XIAOMI_API_KEY       api_key env:XIAOMI_API_KEY
+```
+
+The pool rotates on failure (429/402/401), but the `←` shows which one is used right now.
 
 ### Verify
 
@@ -610,6 +695,12 @@ Or use the interactive CLI: `hermes fallback`.
 ### Config read by `hermes config` vs actual file
 
 `hermes config` displays a formatted summary — for the raw YAML, use `hermes config edit` or `cat ~/.hermes/config.yaml`.
+
+### Agent cannot edit config.yaml directly (security block)
+
+Hermes security prevents the agent from modifying `~/.hermes/config.yaml` via `patch`, `write_file`, or `terminal` tools. Attempting this returns: `"Refusing to write to Hermes config file: Agent cannot modify security-sensitive configuration."`
+
+**Use `hermes config set` for scalar values.** For complex structures (lists like `fallback_providers`, or when many fields need batch updates), present the user with the exact edit instructions (line numbers + content) and let them edit manually.
 
 ### Changes require session restart
 
