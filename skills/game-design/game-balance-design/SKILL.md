@@ -74,6 +74,7 @@ Let the user choose, then compile the selected combination into a final design d
 - `references/game-balance-design.md` — Full session case study (5-round iteration on deduction thresholds), Python script template, and common numerical failure modes.
 - `references/game-content-documentation.md` — Standards for documenting game content tables (affix index, realm names, table format conventions).
 - `references/map-grid-from-image.md` — Technique: extract a room grid and connectivity from a user-drawn map image using PIL pixel analysis.
+- `references/game-systems-design-patterns.md` — Layered legacy system (death + roguelite + tiered inheritance) and GUI+command dual-track architecture (non-numerical game design patterns).
 
 ## Combat Damage / Skill Value Design
 
@@ -216,6 +217,11 @@ When designing attack/defense/realm-power curves, avoid **hard branches** where 
 - **Ling-gen preconditions on elemental skills:** The user clarified that common skills should have `min_ling_gen=15` (just a token check for having the element), no higher. Only rare/specialized skills warrant higher thresholds.
 - **Continuous power curves need a floor.** A pure power curve `(x/T)^p` breaks at x ≤ 0 — returns 0 or NaN, causing silent bugs (zero damage, division errors). Always clamp: `if x <= 0: return EPSILON` (0.05–0.1). Common gotcha: debuff systems that push attack/defense below zero. Affects Pattern B (Pure Power) and any un-bounded curve.
 - **Hard branches hide debuff irrelevance.** `if x <= 100: return 1.0` makes attack=1 and attack=100 produce identical output. The user called this out as a design smell: defense gets soft-capped from 0, so attack should too. If defense uses `def/(def+C)`, attack should be symmetric — either both continuous or both thresholded.
+
+## Game Systems Design (Non-Numerical)
+
+For higher-level game design patterns — legacy/inheritance systems, interaction architecture, core loop design — see:
+- `references/game-systems-design-patterns.md` — Layered legacy system (death + roguelite + tiered inheritance) and GUI+command dual-track architecture
 
 ## Related Skills
 
