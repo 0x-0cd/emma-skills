@@ -28,7 +28,7 @@ Run this checklist after `hermes update` (or any major Hermes change) to confirm
 ### 1. Version & Freshness
 
 ```bash
-hermes version            # Expected: matches the latest release tag
+hermes --version          # Expected: matches the latest release tag (note: `hermes version` is NOT a valid subcommand — must use `--version` flag)
 hermes update --check     # Expected: "Already up to date."
 pip show hermes-agent     # Confirm version matches
 ```
