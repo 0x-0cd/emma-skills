@@ -44,6 +44,8 @@ Set when using a proxy, self-hosted endpoint, or region-specific URL.
 
 ## OpenCode CLI (Separate Binary) Auth
 
+> **⚠️ 2026-09-11：本机已删除 OpenCode，本节不适用于本机。** 保留仅为"其他机器 / 将来重装"参考。
+
 The `opencode` binary has its own credential resolution that does NOT share Hermes's `.env`:
 
 - Reads `~/.local/share/opencode/auth.json` as primary

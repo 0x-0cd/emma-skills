@@ -153,7 +153,7 @@ Task / Request arrives
 ├── Agent Workflows
 │   ├── Need autonomous sub-agents?                  → dispatching-parallel-agents
 │   ├── QA testing a web app?                        → dogfood
-│   └── Spawn OpenCode coding subagent?              → code-task
+│   └── Write/fix code yourself (Emma does it)?      → code-task
 │
 └── Completely off-topic / unclear?
     └── → brainstorming (start with clarifying questions)

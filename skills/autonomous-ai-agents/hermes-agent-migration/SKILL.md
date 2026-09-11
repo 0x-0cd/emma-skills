@@ -52,7 +52,7 @@ The new approach: **no_agent=true bash script**. Deterministic, zero-token runti
 
 | Component | URL | Visibility | Contents | Typical Size |
 |-----------|-----|-----------|----------|-------------|
-| **emma-skills** | `github.com/0x-0cd/emma-skills` | 🔓 Public | 37 custom skills across 13 categories + install.sh | ~1.5MB |
+| **emma-skills** | `github.com/0x-0cd/emma-skills` | 🔓 Public | 52 custom skills + install.sh | ~1.5MB |
 | **hermes-soul** | `github.com/0x-0cd/hermes-soul` | 🔒 Private | export/import/install scripts + GitHub Releases (memory data) | ~1MB (scripts), ~11MB (tarball) |
 | **Cron Script** | `~/.hermes/scripts/sync-all.sh` | — | no_agent bash; runs daily at 02:00; outputs to QQ | — |
 
@@ -133,8 +133,7 @@ skills/
 │   └── research-backed-validation/
 ├── software-development/
 │   ├── code-project/                # Emma written
-│   ├── code-task/                   # Emma written
-│   └── opencode-skills-portfolio/
+│   └── code-task/                   # Emma written
 └── superpowers/                     # Custom category
     ├── brainstorming/
     ├── dispatching-parallel-agents/
@@ -142,7 +141,7 @@ skills/
     └── writing-skills/
 ```
 
-Total: **37 custom skills** across **15 category/subcategory groups** (as of skill creation; karpathy-skill was deleted 2026-06-19, count may differ — run `ls ~/emma-skills/skills/` to verify).
+Total: **52 custom skills** in `~/emma-skills` (verified 2026-09-12; the local `~/.hermes/skills` library is a superset — run `find ~/emma-skills/skills -name SKILL.md | wc -l` to re-verify).
 
 ### Install on a new machine
 
@@ -195,33 +194,20 @@ bash install.sh
 
 Single cron job (`6305f00fbeac`) runs **daily at 02:00 Beijing time**.
 
-### ⚠️ Current State (as of 2026-06-20) — Migration Pending
+### ✅ Current State (verified 2026-09-12) — no_agent script, ACTIVE
 
-**The cron is STILL running in LLM-prompt mode, NOT the no_agent bash script described below.** The intended migration to `no_agent=true` + `sync-all.sh` hasn't been completed.
+The migration is **done**: the cron runs `~/.hermes/scripts/sync-all.sh` directly with **no LLM involved**. Do NOT re-diagnose this as "migration pending" — older revisions of this file claimed that and were wrong.
 
-Current cron config:
-- Mode: LLM-driven (has an LLM prompt, enabled_toolsets=[terminal, file, session_search])
-- No `script` set, no `no_agent` flag
-- Last status: ok (runs nightly, reports "no change" because its detection logic is incomplete)
+Verify the live state before trusting prose (cheap, always current):
 
-**Known design flaw in current LLM cron:** It only checks modification timestamps of 4 specific public skills (`book-reading-guide/hermes-self-evolution/karpathy-skill/nuwa-skill`) under `~/emma-skills/skills/`. It does NOT check:
-- `~/.hermes/config.yaml` changes (especially `platform_disabled` additions/removals)
-- `git status` in `~/emma-skills/` for unpushed commits
-- Disk state vs config.yaml references (e.g., skill directory exists but was disabled in config, or vice versa)
-- Files outside those 4 skills (e.g., new skills or removed ones)
-
-This means after a skill audit that modifies 14+ SKILL.md files, adds/removes `platform_disabled` entries, and reorganizes `_disabled/` directories, the cron reports "no change — skipping sync."
-
-**To migrate to no_agent:**
 ```bash
-# 1. Confirm sync-all.sh exists and is executable
-ls -la ~/.hermes/scripts/sync-all.sh
-
-# 2. Update the cron job to no_agent mode
-# cronjob(action='update', job_id='6305f00fbeac', script='sync-all.sh', no_agent=true)
+python3 -c "
+import json; d=json.load(open('$HOME/.hermes/cron/jobs.json'))
+j=[x for x in (d if isinstance(d,list) else d['jobs']) if 'sync' in str(x.get('name',''))][0]
+print('no_agent:', j.get('no_agent'), '| script:', j.get('script'), '| status:', j.get('last_status'))
+"
+# → no_agent: True | script: sync-all.sh | status: ok
 ```
-
-### Intended Design (no_agent bash, not yet active)
 
 Mode: `no_agent=true` — runs `~/.hermes/scripts/sync-all.sh` directly without an LLM.
 
@@ -232,6 +218,31 @@ Mode: `no_agent=true` — runs `~/.hermes/scripts/sync-all.sh` directly without 
 2. Scan `~/.hermes/skills/` — find all custom skills (not in bundled index, not `.`/`_`/`apple`)
 3. Copy each custom skill to `~/emma-skills/skills/` (preserving category structure)
 4. Remove stale skills from repo that no longer exist in source
+
+   ⚠️ **File-level orphan blind spot (verified 2026-09-12).** Step 4 only walks *directories* at
+   `find "$EMMA_SKILLS_DIR/skills" -mindepth 1 -maxdepth 3 -type d`, and only removes a directory
+   when the matching source directory is gone. Consequences:
+
+   - Deleted whole skill (directory) → cleaned ✅
+   - Deleted *file* inside a skill that still exists (e.g. `code-task/references/opencode-session-management.md`
+     after the source file was deleted) → **never cleaned ❌**, it lingers in the public repo forever.
+
+   So whenever you delete a `references/*.md`, `templates/*` or `scripts/*` file locally, clean the
+   repo copy by hand in the same session — don't wait for the cron:
+
+   ```bash
+   cd ~/emma-skills
+   # find every repo file whose local source is gone
+   for f in $(git ls-files | grep '^skills/'); do [ -e ~/.hermes/skills/"${f#skills/}" ] || echo "orphan: $f"; done
+   # remove the ones that are genuinely retired, then:
+   git rm -r --quiet <paths> && git commit -m "🗑 ..." && git push origin main
+   # verify (fetch first — ls-tree reads the local cache):
+   git fetch -q origin main && git ls-tree -r --name-only origin/main | grep -i '<old-name>' || echo "✅ clean"
+   ```
+
+   Note `git rm` stages only the paths you name — a directory removed earlier with plain `rm -rf`
+   stays as an **unstaged** deletion and will be silently skipped by a later `git commit`. Re-check
+   `git status --porcelain` is empty after pushing.
 5. If anything changed: `git add -A && git commit && git push origin main`
 
 **Phase 2 — hermes-soul sync:**

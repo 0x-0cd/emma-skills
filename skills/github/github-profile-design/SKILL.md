@@ -7,7 +7,7 @@ platforms: [linux]
 metadata:
   hermes:
     tags: [GitHub, Profile, README, Design, Widgets]
-    related_skills: [code-task, opencode, github-repo-management]
+    related_skills: [code-task, github-repo-management]
 ---
 
 # GitHub Profile README Design
@@ -21,7 +21,7 @@ metadata:
 - 目标 GitHub 用户名已知（如 `0x-0cd`）
 - Profile 仓库存在（`<username>/<username>`）
 - 本地已 clone（如 `~/profile_repo/`）
-> - 需要 OpenCode 小弟的帮助来生成最终 README（参考 `code-task` skill）
+> - 需要生成/大改最终 README 时，自己动手（参考 `code-task` skill）
 
 ## 设计流程
 
@@ -100,9 +100,9 @@ curl -s "https://komarev.com/ghpvc/?username=0x-0cd"
 | Streak text | `currStreakLabel=ffffff` | `currStreakLabel=000000` |
 | Streak dates | `dates=666666` | `dates=999999` |
 
-### Step 5: 用 OpenCode 小弟生成 README
+### Step 5: 生成 README（Emma 自己写）
 
-参考 `code-task` skill 的 prompt 模板：
+不要外派，按下面的清单自己写：
 
 ```
 项目在 ~/profile_repo

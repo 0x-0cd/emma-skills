@@ -1,5 +1,11 @@
 # Mimo V2.5 Vision API — Programmatic Usage
 
+> **⚠️ 2026-09-11 状态：Xiaomi MiMo 凭证已删除（账户无余额）。**
+> `~/.hermes/auth.json` 的 `credential_pool.xiaomi` 整池已移除，`.env` 中也没有 `XIAOMI_API_KEY`，
+> 本文件里的任何调用都会 401。**保留此文档仅作 API 知识留存**，恢复需先充值再 `hermes auth add xiaomi`。
+> 本机 `auxiliary.vision` 已改为 `deepseek` / `deepseek-flash`。
+
+
 Call Xiaomi MiMo (Mimo V2.5) directly when the built-in `vision_analyze` tool is not in your available toolsets (e.g. the `vision` toolset isn't enabled this session).
 
 ## Prerequisites

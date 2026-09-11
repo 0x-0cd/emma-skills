@@ -44,6 +44,32 @@ hermes config check       # Expected: no REQUIRED items missing
 
 If `hermes config check` reports "Config version: X → Y (update available)", it's a normal schema migration — run `hermes config migrate` if the user okays it.
 
+**Known issue: post-update "platform references unknown toolset" warnings**
+
+`hermes update`'s config migration (the `Checking configuration for new options...` phase) may print lines like:
+
+```
+⚠️  platform 'qqbot' references unknown toolset 'messaging' — did you mean 'hermes-qqbot'?
+⚠️  platform 'google_chat' has no valid toolsets configured — the agent will have no tools on this platform.
+```
+
+These are **stale config leftovers, not new-version breakage**. Verify any name against the canonical table before acting:
+
+```bash
+cd ~/.hermes/hermes-agent && python3 -c "
+import re
+src = open('toolsets.py').read()
+names = re.findall(r'^    \"([a-z0-9_-]+)\":', src, re.M)
+for n in ['messaging','moa','mcp-codegraph','hermes-teams','hermes-google_chat']:
+    print(f'{n:20s}', 'defined' if n in names else 'NOT defined')"
+```
+
+Observed (2026-09, v0.21.1): `messaging`, `moa`, `mcp-codegraph`, `hermes-teams`, `hermes-google_chat` are **never defined** in `toolsets.py` — `git log -S` confirms they never were. They are hand-added history, safely ignored: the platform's *other* toolsets still load normally.
+
+- **Only a real problem when EVERY toolset for a platform is invalid** — the warning says so explicitly (`has no valid toolsets configured`). That platform would get no tools. Check whether the platform is even enabled (`platforms:` section of config.yaml) before caring.
+- **MCP servers don't need a toolset** — e.g. `codegraph` is provided via `mcp_servers:` config, so a `mcp-codegraph` toolset entry is redundant, not missing.
+- **Optional cleanup:** remove the stale names from `platform_toolsets.<platform>` in `config.yaml` (backup first). Purely cosmetic — the warnings are noise, not breakage.
+
 **Known issue: `hermes doctor` timeout (GitHub #35838)**
 - `hermes doctor` may hang for 30+ seconds when `models.dev` is unreachable and the local cache is stale
 - **Workaround:** `touch ~/.hermes/models_dev_cache.json` to refresh the timestamp
@@ -382,11 +408,15 @@ readlink -f $(which node)                 # Should point to ~/.hermes/node/bin/n
 /home/qn/.nvm/versions/node/*/bin/node --version  # nvm's independent copy
 ```
 
-If the symlink chain resolves to `~/.hermes/node/bin/node`, the nvm version is unused and safe to remove. OpenCode is a native ARM64 binary (not Node-dependent). CodeGraph is a shell script.
+If the symlink chain resolves to `~/.hermes/node/bin/node`, the nvm version is unused and safe to remove. OpenCode（已于 2026-09-11 从本机删除）曾是原生 ARM64 二进制、不依赖 Node。CodeGraph 是 shell 脚本。
 
-### Pitfall: Sudo Password on Pi
+### Pitfall: sudo runs via an approval prompt, not a password
 
-On this Raspberry Pi, `sudo` requires a password and the terminal tool can't interact with password prompts. When a cleanup step needs sudo, report the exact commands and ask the user to run them. Do NOT use `echo "password" | sudo -S` — that's a security anti-pattern.
+On this Raspberry Pi, `sudo` commands issued through the terminal tool trigger an **approval prompt in the user's UI** (observed working for `apt-get update`, `apt clean`, `dpkg --purge`). No password entry is needed or possible.
+
+- The user must be present to approve. If they are away, the command returns **`BLOCKED: timed out without user response`**, with an explicit instruction to NOT retry, NOT rephrase, and NOT pursue the same outcome another way. Stop, report what was found, and wait — silence is not consent.
+- Batch independent privileged steps into ONE command so the approval is requested once.
+- Never use `echo "password" | sudo -S` — security anti-pattern.
 
 ---
 
@@ -426,6 +456,42 @@ rm -rf ~/.cache/node-gyp
 # mneme cache (specific to memory systems)
 rm -rf ~/.cache/mneme
 ```
+
+---
+
+## APT Old-Kernel Cleanup (Raspberry Pi)
+
+After a kernel upgrade, `apt upgrade` leaves three kinds of "old version backups". Identify before deleting — they have very different risk levels:
+
+| Kind | Location | Typical size | Safe to delete? |
+|------|----------|--------------|-----------------|
+| apt download cache | `/var/cache/apt/archives/` | 20-30M | ✅ Always — `sudo apt clean` |
+| old kernel module leftovers | `/lib/modules/<old-versions>/` | ~6.1M each | ✅ Yes, unless that version is the RUNNING or PENDING kernel |
+| old kernel itself in /boot | `/boot/vmlinuz-*`, `initrd.img-*` | ~70M per kernel | ⚠️ ONLY after rebooting into the new kernel and confirming it boots |
+
+The `/lib/modules/<ver>` leftovers from a purged package contain only index files (`modules.alias`, `modules.dep`, ...); the module bodies are already gone. Purged kernels never appear in /boot, so those two categories don't overlap.
+
+### Why `apt autoremove` doesn't help
+
+Removed kernel packages sit in dpkg state `rc` (removed, config remains). `apt-get --dry-run autoremove` reports "0 to remove" — it does NOT touch `rc` packages. You must purge them explicitly.
+
+```bash
+# List stale ones — NEVER include `uname -r` or any kernel still in `dpkg -l | grep '^ii.*linux-image'`
+dpkg -l | awk '$1=="rc" && $2 ~ /^linux-(image|modules|headers)/ {print $2}'
+
+# Purge (drops the /lib/modules/<ver> leftovers + dpkg records)
+sudo dpkg --purge linux-image-6.8.0-XXXX-raspi linux-modules-6.8.0-XXXX-raspi ...
+```
+
+**Safety check before purging:** `uname -r` = running kernel; `dpkg -l | awk '$1=="ii" && $2 ~ /linux-image-6/'` = every installed kernel. Never purge a version in either list. A freshly installed kernel does NOT take effect until reboot — deleting the old /boot files first removes your fallback.
+
+### Pitfall: `sudo du` breaks under rtk
+
+The `rtk-rewrite` plugin rewrites `du` → `rtk du`; under `sudo` the PATH lacks rtk, so you get `sudo: rtk: command not found` and no output. Workaround: absolute path — `sudo /usr/bin/du -sh <dir>`.
+
+### Also note
+
+`/var/backups/` (dpkg.status.0 + .gz history, ~2.6M) is a safety net — never delete it.
 
 ---
 
@@ -650,7 +716,9 @@ sqlite3 state.db "SELECT id, title FROM sessions ORDER BY started_at;"
 
 **Pitfall: `$CURRENT` must be accurate** — double-check before running. If the ID is wrong, you'll delete the active session. Use `session_search()` (browse, no args) to confirm.
 
-**Also check OpenCode sessions** — OpenCode stores session data in a SQLite database at `~/.local/share/opencode/opencode.db` (not `~/.config/opencode/`). Old sessions can accumulate (observed: 115 sessions, ~177 MB). Clean via direct SQL:
+**⚠️ 历史条目（OpenCode 已于 2026-09-11 从本机删除，以下清理步骤不再适用；若将来重装可参考）**
+
+**OpenCode sessions** — OpenCode stores session data in a SQLite database at `~/.local/share/opencode/opencode.db` (not `~/.config/opencode/`). Old sessions can accumulate (observed: 115 sessions, ~177 MB). Clean via direct SQL:
 
 ```bash
 # 0. Check current state
@@ -728,6 +796,29 @@ When the machine is behind a firewall (e.g., Great Firewall of China), a clash/m
 ### Proxy Autoheal Script
 
 See **`~/.hermes/scripts/proxy-autoheal.sh`** — a self-healing script that updates subscriptions, pings all proxy nodes, selects the best 港澳台日韩+Singapore node under 500ms, switches to it, and ensures proxy env vars are set. Designed to be run on-demand or as a cron job. Logs to `~/.hermes/logs/proxy-autoheal.log`.
+
+### Connectivity health-check targets
+
+When verifying the proxy works, test **only what the user actually uses**: `https://www.gstatic.com/generate_204`, `https://github.com`, `https://openrouter.ai/api/v1/models`. Do **NOT** test `api.openai.com` — the user does not use OpenAI and considers it a waste of time.
+
+Per-node latency **without switching the active node** (zero side effects) — see the mihomo external-controller API: `/proxies/{urlencoded_node_name}/delay?url={urlencoded_target}&timeout=5000` on `http://127.0.0.1:9090` with header `Authorization: Bearer <secret>` (secret lives in `~/clashctl/resources/runtime.yaml`).
+
+Note: HTTP 401/404 counts as reachable; only a timeout means the node cannot reach the target.
+
+### Proxy Auto-Start on Boot (lightweight)
+
+**mihomo is NOT a systemd service** — after a reboot the proxy is simply gone until something starts it (observed: post-reboot, ports 7890/9090 dead, all proxied curls fail instantly with HTTP 000). Add a `@reboot` user-crontab entry running `~/.hermes/scripts/proxy-autostart.sh`.
+
+Why a wrapper script is required: `clashctl` is a **shell function** sourced from `~/.bashrc` (`. $CLASHCTL_HOME/scripts/cmd/clashctl.sh`). cron does not load `.bashrc`, so the function doesn't exist there — the wrapper must `export CLASHCTL_HOME="$HOME/clashctl"` and source `$CLASHCTL_HOME/scripts/cmd/clashctl.sh` itself before calling `clashctl on`.
+
+The script only starts the service (lightweight). Full subscription-refresh + node speedtest + best-node switch stays with `proxy-autoheal.sh`, run on demand. Script waits for `ip route get 1.1.1.1` to succeed (max 60s) before starting, and is idempotent (`clashctl on` skips if mihomo already runs).
+
+```bash
+# append without clobbering existing entries (e.g. the gateway watchdog)
+( crontab -l 2>/dev/null; echo "@reboot /home/qn/.hermes/scripts/proxy-autostart.sh >> /home/qn/.hermes/logs/proxy-autostart-cron.log 2>&1" ) | crontab -
+```
+
+**Requires sudoers NOPASSWD for the Tun-mode start** — verify with `sudo -n -l`; expect `(ALL) NOPASSWD: /usr/bin/pkill` and `(ALL) NOPASSWD: /home/qn/clashctl/bin/mihomo` (without these, `@reboot` cannot start mihomo — no tty for a password prompt). Logs: `~/.hermes/logs/proxy-autostart.log`.
 
 ### Tun Mode — Sudo Key Required
 

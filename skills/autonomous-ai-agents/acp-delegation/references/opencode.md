@@ -1,5 +1,9 @@
 # OpenCode CLI — Quick Reference
 
+> **⚠️ 2026-09-11：本机（树莓派）已彻底删除 OpenCode**（二进制 / 配置 / 凭证 / session DB）。
+> 本文件仅作"其他机器 / 将来重装"的参考；在本机上照抄命令只会 command not found。
+> 本机代码任务改由 Emma 自己执行 —— 见 `code-task` skill。
+
 ## Install
 
 ```bash

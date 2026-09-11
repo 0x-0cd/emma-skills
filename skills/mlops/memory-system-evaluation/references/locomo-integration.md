@@ -12,30 +12,15 @@ Session-specific details from the initial LoCoMo integration with Mneme (June 20
 
 ## API Key Configuration
 
-DeepSeek API keys live in `~/.local/share/opencode/auth.json`:
+唯一的 DeepSeek 凭证存在 `~/.hermes/auth.json` 的 `credential_pool.deepseek[0].access_token`（池内只有这一条，2026-09-11 起）。不要打印 key。
 
-```json
-{
-  "deepseek": {
-    "type": "api",
-    "key": "sk-235a..."
-  },
-  "opencode-go": {
-    "type": "api",
-    "key": "sk-3yOD..."
-  }
-}
-```
-
-Use env var → `auth.json["deepseek"]["key"]` → `auth.json["opencode-go"]["key"]` in order.
+旧的 env 变量路径（`DEEPSEEK_API_KEY`）已清理并在 auth.json 里 suppress；`~/.local/share/opencode/auth.json` 所属的 OpenCode 已于 2026-09-11 从本机彻底删除（历史 opencode-go 路线一并废弃）。
 
 ## Model Names
 
 | Target | Model String |
 |--------|-------------|
-| Direct DeepSeek API | `deepseek-v4-flash` |
-| Direct DeepSeek API | `deepseek-v4-pro` |
-| OpenCode proxy | `opencode-go/deepseek-v4-flash` |
+| Direct DeepSeek API | `deepseek-flash`（= DeepSeek-V4.1-Flash，唯一推荐）|
 
 ## The Temporal Metadata Bug
 

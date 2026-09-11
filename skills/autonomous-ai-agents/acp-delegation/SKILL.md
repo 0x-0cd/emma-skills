@@ -35,7 +35,7 @@ claude -p 'Add error handling to all API calls' --allowedTools 'Read,Edit' --max
 # Codex
 codex exec 'Add dark mode toggle to settings'
 
-# OpenCode
+# OpenCode（⚠️ 本机 2026-09-11 已删除，此命令不可用；仅作其他机器 / 将来重装后的参考）
 opencode run 'Add retry logic to API calls' --model deepseek/deepseek-v4-flash
 ```
 

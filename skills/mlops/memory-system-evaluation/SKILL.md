@@ -13,6 +13,12 @@ tags:
   - MLOps
 ---
 
+> **⚠️ 2026-09-11 状态更新：`PROVIDER=opencode` 路径已不可用。**
+> OpenCode 已从本机删除，`~/.local/share/opencode/auth.json` 不存在；opencode-go 账户余额为 0（实测 401 CreditsError）。
+> 基准测试请用 **`PROVIDER=direct`**（有效的 deepseek key 在 `~/.hermes/auth.json` 的凭证池里，无需新申请 key）。
+> 下面关于 opencode-go 的配置说明与质量对比保留为历史记录。
+
+
 # Memory System Evaluation
 
 Systematic evaluation of custom memory backends against academic benchmarks. Use when benchmarking, comparing, or debugging a memory system's performance.
@@ -59,7 +65,7 @@ import httpx
 r = httpx.post(
     "https://api.deepseek.com/chat/completions",
     headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-    json={"model": "deepseek-v4-flash", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 5},
+    json={"model": "deepseek-flash", "messages": [{"role": "user", "content": "hi"}], "max_completion_tokens": 5},
     timeout=30
 )
 assert r.status_code == 200
@@ -84,9 +90,9 @@ With 5 conversations × 100 questions each = 500 questions × 2 API calls each =
 At RPM=30 (~15s per question pair), that's **~4 hours** of wall time.
 **Always compute `total_questions × time_per_question` before starting a full run.**
 For a quick comparison benchmark, use `MAX_CONVERSATIONS=3 MAX_QUESTIONS=10` (~60 API calls, ~15 minutes).
-- `PROVIDER`: `direct` (DeepSeek straight) or `opencode` (route through opencode-go proxy). Set in `.env` file for persistence. When `opencode`, reads key from `opencode/auth.json → opencode-go.key` and sets base to `https://opencode.ai/zen/go/v1`. The opencode-go API is OpenAI-compatible.\n- `ANSWER_RETRIES`: Max retries for empty API responses (default 5, exponential backoff 1s→2s→4s→...≤30s). Opencode-go proxy frequently returns empty responses (~51%); retries mitigate this.\n- `CONV_START` / `CONV_END`: Conversation index range for sharding (default 0/9). Each conversation is independent.
+- `ANSWER_RETRIES`: Max retries for empty API responses (default 5, exponential backoff 1s→2s→4s→...≤30s). 直连 DeepSeek 偶发空内容（reasoning 占满预算）时重试可缓解。\n- `CONV_START` / `CONV_END`: Conversation index range for sharding (default 0/9). Each conversation is independent.
 - `BATCH_NAME`: Optional label on result filenames when sharding.
-- `DEEPSEEK_MODEL`: Answerer/judge model name (default `deepseek-v4-flash`)
+- `DEEPSEEK_MODEL`: Answerer/judge model name (default `deepseek-flash`)
 - `DEEPSEEK_BASE`: API base URL (default `https://api.deepseek.com/v1`)
 
 **Essential: reference date**
@@ -285,33 +291,31 @@ On some ARM64 platforms, uvicorn serves sync clients (urllib) fine but aiohttp/h
 The benchmark prompt sorts memories by `created_at` and prepends dates to each entry. If the memory system stores session timestamps in `metadata.timestamp` but the server sets `created_at` to the ingestion time, **every memory looks like it was created today**. The fix: embed dates in chunk content text.
 
 ### ⚠️ API key routing
-Many setups have multiple API keys (direct provider key + proxy key). Set `PROVIDER=opencode` in `.env` to route through opencode-go proxy automatically (reads key from `~/.local/share/opencode/auth.json → opencode-go.key`). Set `PROVIDER=direct` to use DeepSeek straight.
+只需一把直连凭证（2026-09-11 起）：`~/.hermes/auth.json` → `credential_pool.deepseek[0].access_token`（池内唯一一条）。代理路线（opencode-go）已废弃，`PROVIDER` 开关不再有意义——直连 `https://api.deepseek.com/v1`。
 
-Key discovery hierarchy (when PROVIDER=opencode):
-1. `~/.local/share/opencode/auth.json` → `opencode-go.key` (proxy key)
-2. Fallback: env var `DEEPSEEK_API_KEY` + `DEEPSEEK_BASE`
+基准脚本的凭证解析顺序：
+1. 环境变量 `DEEPSEEK_API_KEY`（若存在）
+2. `~/.hermes/auth.json` → `credential_pool.deepseek[*].access_token`
 
-Key discovery hierarchy (when PROVIDER=direct):
-1. Environment variable `DEEPSEEK_API_KEY`
-2. `~/.local/share/opencode/auth.json` → `deepseek.key` (direct API key)
+⚠️ **不要打印 key**（会进会话历史与日志），也不要把它写进 shell 命令或发送到任何聊天渠道。
 
-⚠️ **RTK/env var obfuscation:** Hermes' security system (RTK, secret redaction) filters env vars containing "API_KEY" from being visible to or passed to child processes. `source ~/.hermes/.env && python script.py` will NOT propagate `DEEPSEEK_API_KEY` — the subprocess sees an empty string. This is NOT a shell issue; RTK intercepts the env var name at the output level. **Workaround:** Write keys to `~/.local/share/opencode/auth.json` via `execute_code` (not `terminal`, since terminal output is filtered), then let the script's `auth.json` fallback read it.
+⚠️ **RTK/env var obfuscation:** Hermes 的秘密遮蔽会把含 "API_KEY" 的环境变量对子进程隐藏。`source ~/.hermes/.env && python script.py` 中子进程看到的是空字符串。**Workaround:** 让脚本自己读 `~/.hermes/auth.json`（见 `templates/run_locomo_local.py` 的 `_load_deepseek_key()`），或在 `execute_code` 里读取后同进程使用。
 
-⚠️ **When DeepSeek API key expires mid-benchmark, Hermes compression also breaks:** The `auxiliary.compression` provider typically points at `deepseek`, and when the key expires, compression throws 401 errors (`/compress` command fails). Reconfigure it to use opencode-go:
+⚠️ **When the DeepSeek API key expires mid-benchmark, Hermes compression also breaks:** `auxiliary.compression` points at `deepseek`, and when the key is invalid, compression throws 401 errors (`/compress` command fails). 本机只有 deepseek 一家（opencode-go 已于 2026-09-11 删除），所以不要改 provider —— 去修凭证本身：
 
 ```bash
-hermes config set auxiliary.compression.provider opencode-go
-hermes config set auxiliary.compression.model deepseek-v4-flash
-hermes config set auxiliary.compression.base_url https://opencode.ai/zen/go/v1
+# 换掉失效的 key（会走密码式提示符，不要把 key 写进命令行/聊天）
+hermes auth remove deepseek
+hermes auth add deepseek --type api-key --priority 0
+hermes auth list          # 确认新条目生效
 ```
 
-The api_key stays empty (picked up from the credential pool automatically). After this, `/compress` works again.
-
-⚠️ **Opencode-go quality caveat:** If you must use opencode-go (for call records, billing, etc.), expect ~32pp lower accuracy than direct DeepSeek. This is NOT suitable for publishing benchmark results — use direct API for that.
+`api_key` 配置项保持为空（自动从凭证池取）。改完后 `/compress` 恢复。
 
 ### ⚠️ Model naming
-DeepSeek V4 API uses model names `deepseek-v4-flash` or `deepseek-v4-pro` (NOT `deepseek-chat`). When routing through `opencode-go` proxy, use the bare model name (the proxy normalizes it):
-- `deepseek-v4-flash` (both direct and via opencode-go proxy, since the proxy is OpenAI-compatible)
+规范模型名：`deepseek-flash`（= DeepSeek-V4.1-Flash，2026-09-10 上线，原生多模态）。旧名 `deepseek-v4-flash` 仍可调用，但对应模型已下线，请求由 V4.1-Flash 提供并按 Flash 价计费；`deepseek-chat` 已于 2026-07-24 停止。**不要用 `deepseek-v4-pro`**：官方计划有序下线它（北京时间 9/14 12:00 后 `deepseek-v4-pro` 请求全部路由到 V4.1-Flash），且综合指标已被 V4.1-Flash 超越。
+
+基准评测一律**直连官方 API**（`https://api.deepseek.com/v1`）。任何第三方代理路线（历史上的 opencode-go 等，2026-09-11 已从本机删除）会带来约 −32pp 的精度损失，不适合产出可发布的数字。
 
 ### ⚠️ Proxy for model downloads
 HuggingFace model downloads (tokenizer, embedding models) may need `http_proxy`:

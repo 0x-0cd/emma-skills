@@ -1,5 +1,11 @@
 # Worked Example: Opencode Go → DeepSeek Fallback
 
+> **⚠️ 2026-09-11 起本机不适用。** `opencode-go` provider 已随 OpenCode 一起删除，本机
+> `fallback_providers` 已置空（`[]`），唯一 provider 是 `deepseek`（模型 `deepseek-flash`），
+> **没有 fallback 链**。下面所有 `opencode-go` 的端点 / 定价 / key 路径均已失效。
+> 保留此文仅作"以后要重新配 fallback 链时该怎么做"的方法论参考 —— 把它套到别的 provider 上即可，
+> 但**不要照抄 opencode-go 那几行**。
+
 Configuring a fallback chain where `opencode-go` is the primary (unstable) provider and `deepseek` is the backup.
 
 ## Starting State
@@ -8,7 +14,7 @@ Configuring a fallback chain where `opencode-go` is the primary (unstable) provi
 # ~/.hermes/config.yaml
 model:
   base_url: https://api.deepseek.com
-  default: deepseek-v4-flash
+  default: deepseek-flash
   provider: deepseek
 fallback_providers: []
 ```
@@ -30,7 +36,7 @@ Result:
 ```yaml
 model:
   base_url: ''
-  default: deepseek-v4-flash
+  default: deepseek-flash
   provider: opencode-go
 ```
 
@@ -38,13 +44,13 @@ model:
 
 ```bash
 # ❌ BUG: This stores the value as a YAML string, not a list
-hermes config set fallback_providers '[{"provider": "deepseek", "model": "deepseek-v4-flash"}]'
+hermes config set fallback_providers '[{"provider": "deepseek", "model": "deepseek-flash"}]'
 ```
 
 Result in config.yaml:
 ```yaml
 # ⚠️ String literal — not parsed as YAML list
-fallback_providers: '[{"provider": "deepseek", "model": "deepseek-v4-flash"}]'
+fallback_providers: '[{"provider": "deepseek", "model": "deepseek-flash"}]'
 ```
 
 `hermes fallback ls` output: `"No fallback providers configured."`
@@ -56,14 +62,14 @@ Manually edit `~/.hermes/config.yaml` with proper YAML:
 ```bash
 # Replace the string with proper YAML
 # Either use sed or hermes config edit
-sed -i "s/fallback_providers:.*/fallback_providers:\n  - provider: deepseek\n    model: deepseek-v4-flash/" ~/.hermes/config.yaml
+sed -i "s/fallback_providers:.*/fallback_providers:\n  - provider: deepseek\n    model: deepseek-flash/" ~/.hermes/config.yaml
 ```
 
 Result:
 ```yaml
 fallback_providers:
   - provider: deepseek
-    model: deepseek-v4-flash
+    model: deepseek-flash
 ```
 
 ## Verification
@@ -74,10 +80,10 @@ hermes fallback ls
 
 Output:
 ```
-Primary:   deepseek-v4-flash  (via opencode-go)
+Primary:   deepseek-flash  (via opencode-go)
 
   Fallback chain (1 entry):
-    1. deepseek-v4-flash  (via deepseek)
+    1. deepseek-flash  (via deepseek)
 
   Tried in order when the primary fails (rate-limit, 5xx, connection errors).
 ```
@@ -87,11 +93,11 @@ Primary:   deepseek-v4-flash  (via opencode-go)
 ```yaml
 model:
   base_url: ''
-  default: deepseek-v4-flash
+  default: deepseek-flash
   provider: opencode-go
 fallback_providers:
   - provider: deepseek
-    model: deepseek-v4-flash
+    model: deepseek-flash
 credential_pool_strategies: {}
 ```
 

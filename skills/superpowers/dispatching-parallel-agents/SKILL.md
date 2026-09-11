@@ -161,14 +161,11 @@ Subagents **cannot reliably read sensitive env vars** from `~/.hermes/.env`. Whe
 
 ### Silent-Hang Trap
 
-When a subagent task is too large (100+ files, 10000+ lines), the terminal-based dispatch (`opencode run --format json` via `terminal()`) can **silently hang** — no error logged, no progress, no crash. You won't know until the user asks or hours pass.
+**(历史条目：2026-09-11 起 OpenCode 已从本机删除，但"大范围扫描必须拆并行子 agent"这条规则不变)** When a task is too large (100+ files, 10000+ lines), a single-line terminal dispatch (formerly `opencode run --format json` via `terminal()`) can **silently hang** — no error logged, no progress, no crash. You won't know until the user asks or hours pass.
 
-**Prevention:** Any analysis covering the full project must use `delegate_task` with dimension-split, not a single `opencode run` call. `delegate_task` subagents have better isolation and output handling for large scopes.
+**Prevention:** Any analysis covering the full project must use `delegate_task` with dimension-split, not one monolithic dispatch. `delegate_task` subagents have better isolation and output handling for large scopes.
 
-**Detection:** If a background process doesn't notify within 15 minutes, check the OpenCode log:
-```bash
-tail -50 ~/.local/share/opencode/log/opencode.log
-```
+**Detection:** If a background process doesn't notify within 15 minutes, check its log. Use the log path of whatever you actually dispatched — for `delegate_task` subagents that's the transcript path returned at dispatch, for a background terminal process it's `process action=poll` output or your own `--log-file`:
 Static log = silent hang. Kill it (`process action=kill`) and switch to dimension-split strategy.
 
 **Recovery:** After killing, check `git diff --stat` to ensure no half-written files were left behind, then re-dispatch as parallel subagents with smaller scopes.

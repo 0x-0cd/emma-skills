@@ -1,19 +1,26 @@
 # Empty LLM Response Debugging
 
+> **⚠️ 2026-09-11 状态更新：`PROVIDER=opencode` 路径已不可用。**
+> OpenCode 已从本机删除，`~/.local/share/opencode/auth.json` 不存在；opencode-go 账户余额为 0（实测 401 CreditsError）。
+> 基准测试请用 **`PROVIDER=direct`**（有效的 deepseek key 在 `~/.hermes/auth.json` 的凭证池里，无需新申请 key）。
+> 下面关于 opencode-go 的配置说明与质量对比保留为历史记录。
+
+
 **Pattern:** LLM API returns empty/none responses despite being reachable and authenticated.
 
 ## Diagnosis Flow
 
 ### 1. Distinguish: Is the API stable or flaky?
 
-Run a rapid sequential test with 5 simple prompts:
+Run a rapid sequential test with 5 simple prompts (直接打 DeepSeek，凭证从 `~/.hermes/auth.json` 的凭证池读，不要 echo key)：
 
 ```bash
-export http_proxy=http://127.0.0.1:7890 https_proxy=http://127.0.0.1:7890
+KEY=$(python3 -c "import json;print(json.load(open('$HOME/.hermes/auth.json'))['credential_pool']['deepseek'][0]['access_token'])")
 for i in 1 2 3 4 5; do
   echo "=== Request $i ==="
-  timeout 30 ~/.opencode/bin/opencode run -m opencode-go/deepseek-v4-flash \
-    "Just answer with the number $i. No other text." 2>&1
+  curl -s --connect-timeout 30 -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+    -d "{\"model\":\"deepseek-flash\",\"messages\":[{\"role\":\"user\",\"content\":\"Just answer with the number $i. No other text.\"}],\"max_completion_tokens\":64}" \
+    https://api.deepseek.com/v1/chat/completions | python3 -c "import json,sys;print(json.load(sys.stdin)['choices'][0]['message']['content'])"
   sleep 2
 done
 ```
@@ -27,16 +34,16 @@ done
 Don't rely on the SDK/client library — call the API directly with `curl` to see the actual response shape:
 
 ```bash
-KEY=$(python3 -c "import json; print(json.load(open('$HOME/.local/share/opencode/auth.json'))['opencode-go']['key'])")
+KEY=$(python3 -c "import json;print(json.load(open('$HOME/.hermes/auth.json'))['credential_pool']['deepseek'][0]['access_token'])")
 
 curl -s --connect-timeout 30 \
   -H "Authorization: Bearer $KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash",
+    "model": "deepseek-flash",
     "messages": [{"role": "user", "content": "Your benchmark prompt here..."}],
-    "max_tokens": 4096
-  }' https://opencode.ai/zen/go/v1/chat/completions | python3 -c "
+    "max_completion_tokens": 4096
+  }' https://api.deepseek.com/v1/chat/completions | python3 -c "
 import json,sys; d=json.load(sys.stdin); c=d['choices'][0]
 print(f'finish_reason: {c[\"finish_reason\"]}')
 content = c['message'].get('content', '')
@@ -117,10 +124,10 @@ max_tokens = 8192  # double the default for long-context prompts
 
 **How to verify which parameter the API accepts:**
 ```bash
-# Test with max_completion_tokens:
+# Test with max_completion_tokens (直连 DeepSeek；key 从凭证池读，勿 echo):
 curl -s -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":10}' \
-  https://opencode.ai/zen/go/v1/chat/completions | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'])"
+  -d '{"model":"deepseek-flash","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":10}' \
+  https://api.deepseek.com/v1/chat/completions | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'])"
 
 # Compare: max_completion_tokens=4096 gives ~3.7KB content + reasoning
 #          max_tokens=4096 gives ~5KB content (reasoning shares budget)

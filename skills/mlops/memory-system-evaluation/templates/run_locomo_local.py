@@ -7,7 +7,7 @@ Environment variables:
   MAX_CONVERSATIONS  conversations to process (default 5)
   MAX_QUESTIONS      questions per conversation (default 100)
   TOP_K              search results to retrieve (default 50)
-  DEEPSEEK_MODEL     LLM for answer/judge (default deepseek-v4-flash)
+  DEEPSEEK_MODEL     LLM for answer/judge (default deepseek-flash)
   DEEPSEEK_BASE      API base URL (default https://api.deepseek.com/v1)
 """
 import asyncio, json, logging, os, re, sys, time
@@ -28,17 +28,30 @@ from benchmarks.locomo.run import (
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 logger = logging.getLogger("locomo-local")
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-if not DEEPSEEK_API_KEY:
-    auth_path = os.path.expanduser("~/.local/share/opencode/auth.json")
+def _load_deepseek_key() -> str:
+    """凭证来自 ~/.hermes/auth.json 的 credential_pool.deepseek[0].access_token。
+
+    不要打印返回值。旧的 ~/.local/share/opencode/auth.json 已随 OpenCode
+    于 2026-09-11 从本机删除，不要回退到那个路径。
+    """
+    key = os.getenv("DEEPSEEK_API_KEY", "")
+    if key:
+        return key
+    auth_path = os.path.expanduser("~/.hermes/auth.json")
     try:
         with open(auth_path) as f:
-            auth = json.load(f)
-        DEEPSEEK_API_KEY = auth.get("deepseek", {}).get("key", "")
+            pool = json.load(f).get("credential_pool", {}).get("deepseek", [])
+        for entry in pool:
+            if entry.get("access_token"):
+                return entry["access_token"]
     except (FileNotFoundError, json.JSONDecodeError):
         pass
+    return ""
 
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+
+DEEPSEEK_API_KEY = _load_deepseek_key()
+
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
 DEEPSEEK_BASE = os.getenv("DEEPSEEK_BASE", "https://api.deepseek.com/v1")
 TOP_K = int(os.getenv("TOP_K", "50"))
 CUTOFFS = [10, 20, 50]

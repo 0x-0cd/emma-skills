@@ -111,10 +111,9 @@ find . -name "*.md" -exec grep -l '哥哥\|老板' {} \;
 - 类型后加 `!`：`feat!: remove deprecated API`
 - 或脚注写 `BREAKING CHANGE:`
 
-### 给小弟的 commit 指令
+### Commit 消息
 
-OpenCode `opencode run` 会自动生成 commit 消息。在 prompt 末尾加：
-> "commit 消息请使用 Conventional Commits 格式"
+自己写 commit 消息，严格按 Conventional Commits 格式（类型表见本 skill 上文）。
 
 ---
 
@@ -418,9 +417,9 @@ python -m pytest tests/test_types.py tests/test_db.py -v --tb=short --timeout=30
 
 ---
 
-## ✓ 验证外部代码改动（小弟输出审查流程）
+## ✓ 提交前自检（自己改完的验证流程）
 
-当 OpenCode 小弟完成代码改动后，Emma 需要验证输出再告知用户。按以下顺序执行：
+代码改动完成后、**提交前**，按以下顺序自检。不跑完这一套不提交、不汇报"改完了"：
 
 ### 审查流水线
 

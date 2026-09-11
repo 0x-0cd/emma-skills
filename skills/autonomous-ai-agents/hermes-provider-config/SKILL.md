@@ -24,9 +24,9 @@ For any provider (primary, auxiliary, delegation), when `api_key` is empty (`''`
 
 1. **Provider-specific env var** — `<PROVIDER>_API_KEY` (e.g. `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`)
 2. **Alias env var** — Some providers also check alternate names (e.g. `GOOGLE_API_KEY` vs `GEMINI_API_KEY`)
-3. **OpenCode auth.json** — `~/.local/share/opencode/auth.json` (last resort fallback)
+3. **OpenCode auth.json** — `~/.local/share/opencode/auth.json` (last-resort fallback) —— **⚠️ 2026-09-11 起本机已无此 tier**：OpenCode 被完整删除，该文件不存在，不要再依赖这条路径。
 
-**Important distinction:** The `opencode-go` Hermes provider type does NOT use `auth.json` for its own API calls — it calls the OpenCode Go API directly using `OPENCODE_GO_API_KEY` + `OPENCODE_GO_BASE_URL` from env vars. `auth.json` is consumed separately by the **OpenCode CLI binary** when invoked as a subprocess (e.g. by the coding subagent).
+> **历史说明（2026-09-11 前）：** `opencode-go` provider 不读 auth.json，它直接用 env var 的 `OPENCODE_GO_API_KEY` + `OPENCODE_GO_BASE_URL`；`auth.json` 是给 **OpenCode CLI 二进制**在被当子进程调用时读的。该 CLI 与 `opencode-go` provider 均已停用（余额不足 + 停止使用）。
 
 ### Full Env Var Name Catalog
 
@@ -42,14 +42,16 @@ For any provider (primary, auxiliary, delegation), when `api_key` is empty (`''`
 | MiniMax | `MINIMAX_API_KEY` | — |
 | Kimi / Moonshot | `KIMI_API_KEY` | — |
 | Alibaba / DashScope | `DASHSCOPE_API_KEY` | — |
-| **Xiaomi MiMo** | `XIAOMI_API_KEY` | `XIAOMI_BASE_URL` |
+| **Xiaomi MiMo**（本机凭证 2026-09-11 已移除） | `XIAOMI_API_KEY` | `XIAOMI_BASE_URL` |
 | Kilo Code | `KILOCODE_API_KEY` | — |
-| **OpenCode Go** | `OPENCODE_GO_API_KEY` | `OPENCODE_GO_BASE_URL` |
+| ~~OpenCode Go~~（2026-09-11 停用） | ~~`OPENCODE_GO_API_KEY`~~ | ~~`OPENCODE_GO_BASE_URL`~~ |
 | OpenCode Zen | `OPENCODE_ZEN_API_KEY` | — |
 | GitHub Copilot | `COPILOT_GITHUB_TOKEN` | — |
 | GitHub Copilot ACP | `COPILOT_CLI_PATH` | — |
 
-### Dual-Consumer Architecture: Hermes vs OpenCode CLI
+### ⚠️ 历史架构（已废弃）：Hermes vs OpenCode CLI
+
+> **2026-09-11 起不再适用。** OpenCode CLI 已从本机删除（二进制 / `~/.config/opencode` / `~/.local/share/opencode` / `~/.cache/opencode` 全清），代码任务改由 Emma 自己执行（见 `code-task` skill）。下面保留仅作"当初为什么这样设计"的说明。
 
 ```
                      ┌──────────────────────┐
@@ -80,9 +82,7 @@ For any provider (primary, auxiliary, delegation), when `api_key` is empty (`''`
        but for different code paths / different providers
 ```
 
-**Key takeaway:** `auth.json` serves dual duty:
-- **Hermes fallback** — when a provider's `api_key` is `''` in config, Hermes falls back to `auth.json`
-- **OpenCode CLI primary** — the OpenCode binary reads `auth.json` as its main credential store
+**曾经的要点：** `~/.hermes/auth.json` 是 **Hermes 自己的凭证池**（现在仍在使用——唯一在用的 deepseek key 就存在里面）；`~/.local/share/opencode/auth.json` 曾是 **OpenCode CLI 自己的凭证库**，该文件已随 OpenCode 于 2026-09-11 删除。**两者是完全不同的文件，不要混为一谈。**
 
 ### Migration Guide: Moving Keys from auth.json to .env
 
@@ -103,13 +103,11 @@ When migrating LLM provider keys out of `auth.json` into `~/.hermes/.env`:
 hermes config | head -25    # Check model section
 hermes doctor               # Check overall health
 
-# 4. Smoke-test OpenCode CLI if used as coding subagent
-opencode auth list           # Should list providers (even without keys)
-opencode run 'respond: OK'   # If this fails, OpenCode CLI doesn't
-                             # support the env var for its provider
+# 4. 验证 Hermes 仍能解析凭证（新起一个进程实测，不要只看配置）
+hermes chat -q "Reply with exactly: PONG"
 ```
 
-**⚠️ Migration risk:** OpenCode CLI reads `auth.json` directly for its own API calls. If the OpenCode binary does NOT support the `DEEPSEEK_API_KEY` (or `OPENCODE_GO_API_KEY`) env var for its own auth, stripping keys from `auth.json` will break the coding subagent. Keep `auth.json` populated for OpenCode CLI if needed, or verify env-var support first.
+> **⚠️ 迁移风险（历史条目）：** 曾经 OpenCode CLI 直接读 `~/.local/share/opencode/auth.json` 作为自己的凭证来源，因此把 key 从 auth.json 挪到 .env 会导致 coding subagent 拿不到凭证。**该风险随 OpenCode 于 2026-09-11 被删除而消失。**
 
 ### Verify Credential Resolution
 
@@ -127,7 +125,7 @@ env | grep -E 'API_KEY|TOKEN' | grep -v 'REDACTED'
 # 0. Quick connectivity check → hermes doctor (runs 26 checks, including provider connectivity)
 # 1. Is the env var set?       → env | grep DEEPSEEK_API_KEY
 # 2. Is the .env file loaded?  → tail ~/.hermes/.env
-# 3. Is auth.json a fallback?  → cat ~/.local/share/opencode/auth.json
+# 3. Hermes 凭证池在不在?     → hermes auth list（~/.hermes/auth.json；opencode 那个 2026-09-11 已删）
 # 4. Credential pool health    → hermes auth list (shows pool status per provider)
 ```
 
@@ -390,6 +388,8 @@ hermes config set auxiliary.curator.model deepseek-v4-flash
 ```
 
 **Option B: DeepSeek + Xiaomi (no external keys needed)**
+**⚠️ 2026-09-11 更新：本机 Xiaomi/MiMo 凭证已删除（账户无余额）。** `auxiliary.vision` 现在是 `deepseek` / `deepseek-v4-flash`（已实测支持图片输入并正确识色）。下面"用 MiMo 承担 vision 以隔离配额"的建议在本机不再适用，保留供将来有余额时参考。
+
 If you already have `DEEPSEEK_API_KEY` and `XIAOMI_API_KEY` — use `deepseek-chat` (V3) for non-vision tasks and Xiaomi MiMo for vision. This keeps auxiliary models on separate quota from your main provider:
 
 ```bash
@@ -605,15 +605,16 @@ The Python subprocess will NOT see `DEEPSEEK_API_KEY` even though `source` loade
 
 **Symptom:** Environment variable shows as `***` in `echo` output and is empty/absent in child processes.
 
-**Workaround — write to auth.json instead:**
+**Workaround — 写进 Hermes 自己的凭证池（`~/.hermes/auth.json`）：**
 
 ```python
-import json
-auth_path = os.path.expanduser("~/.local/share/opencode/auth.json")
+import json, os
+auth_path = os.path.expanduser("~/.hermes/auth.json")
 with open(auth_path) as f:
     auth = json.load(f)
-# Add the key under a provider key that the target tool reads
-auth['deepseek'] = {'key': key_value}
+# 池内结构是 credential_pool[provider] = [ {label, access_token, ...}, ... ]
+pool = auth.setdefault("credential_pool", {}).setdefault("deepseek", [])
+pool.append({"label": "script-key", "auth_type": "api_key", "access_token": key_value, "priority": 0, "source": "manual"})
 with open(auth_path, 'w') as f:
     json.dump(auth, f, indent=2)
 ```
@@ -622,7 +623,9 @@ Use `execute_code` (not `terminal`) for this write — terminal output is filter
 
 The tool/script being configured should have a fallback lookup in `auth.json`. This works because `auth.json` is a static file read by the process itself, not an env var that passes through the Hermes shell session.
 
-The file `~/.local/share/opencode/auth.json` is consumed by **two independent systems**:
+> **⚠️ 历史条目（2026-09-11）：本节描述的 `~/.local/share/opencode/auth.json` 已随 OpenCode 删除而不存在。** Hermes 现在的凭证来源是 `~/.hermes/auth.json` 的凭证池 + `.env`（或 `hermes auth add`）。以下内容保留说明"当初为什么有这个坑"。
+
+The file `~/.local/share/opencode/auth.json` was consumed by **two independent systems**:
 
 - **Hermes Agent** — reads it as a last-resort fallback when `api_key: ''` in config
 - **OpenCode CLI** — reads it as its primary credential store for making LLM calls

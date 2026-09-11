@@ -8,11 +8,14 @@ tags: [chinese, research, web_extract, social-media, scraping, aggregators]
 
 # Chinese Content Research
 
-When researching Chinese internet content, there are three methods ranked by effectiveness. MiMo API search is the best for high-volume Chinese queries.
+When researching Chinese internet content, there are three methods ranked by effectiveness. **⚠️ 2026-09-11 起 Method 1（MiMo API）因凭证被删除而不可用** —— 实际可用的首选是 Method 2（web_extract 聚合站）。
 
 ## Core Pattern — Three Methods
 
-### Method 1 (BEST): MiMo API Web Search
+### Method 1（⚠️ 2026-09-11 起不可用）: MiMo API Web Search
+
+> **凭证已删除** —— Xiaomi MiMo 账户无余额，`credential_pool.xiaomi` 已从 `~/.hermes/auth.json` 整池移除，`~/.hermes/.env` 里也没有 `XIAOMI_API_KEY`。**不要走这条路**（必 401），直接用下面 Method 2 / 3。API 用法保留在此，供将来充值恢复后参考。
+
 When user says "用小米搜" or when high-volume/parallel Chinese search is needed:
 ```bash
 # KEY LOCATION (2026-08-03 update): MiMo key now lives in ~/.hermes/auth.json under credential_pool.xiaomi[].access_token.
@@ -149,7 +152,7 @@ When researching a Chinese-localized game for the first time in a session, build
 ## Pitfalls
 
 ### Web search & scraping
-- **MiMo key location**: The xiaomi API key is in `~/.hermes/auth.json` → `credential_pool.xiaomi[].access_token` (as of 2026-08; the old `~/.hermes/.env` `XIAOMI_API_KEY` no longer exists — sourcing it yields nothing and API calls 401). Read the key with python3 from auth.json and never print it. Note hermes security masking also truncates keys shown via grep/sed on `.env` — always read credentials programmatically inside the script that uses them.
+- **⚠️ MiMo key 已于 2026-09-11 删除** —— 原先位于 `~/.hermes/auth.json` → `credential_pool.xiaomi[].access_token`；整个 xiaomi 凭证池已移除（账户无余额），`~/.hermes/.env` 中也没有 `XIAOMI_API_KEY`。**任何依赖该 key 的脚本都会 401，别再尝试。** 需要中文搜索时改用 Method 2 的 web_extract，或直接用 `web_search` + 英文关键词。
 - **web_search timeout loop**: `web_search` frequently times out on Chinese queries (DuckDuckGo/Brave backends struggle through VPN). After the **first** timeout on a Chinese query, immediately switch to `web_extract` on a known aggregator or official site. Do NOT retry 3+ times — you'll waste turns. If you must search, use short English queries (e.g. `"deepseek" "v4.1"`) rather than Chinese ones.
 - **web_search on English queries still works**: For Chinese-tech topics, search in English can sometimes succeed where Chinese queries fail. Use English query terms + "Chinese" / site filters as a fallback.
 - **GitHub clone through VPN**: HTTPS clone and archive downloads may fail while API (api.github.com) works. Use the API + raw.githubusercontent.com pattern.
